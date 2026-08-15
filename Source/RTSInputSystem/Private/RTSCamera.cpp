@@ -210,6 +210,8 @@ void URTSCamera::BeginPlay()
 void URTSCamera::EndPlay(const EEndPlayReason::Type EndPlayReason)
 {
 	this->SetComponentTickEnabled(false);
+	this->pendingMoveXAxis = 0.0f;
+	this->pendingMoveYAxis = 0.0f;
 	this->unFollowTarget();
 	FViewport::ViewportResizedEvent.RemoveAll(this);
 
@@ -240,18 +242,52 @@ void URTSCamera::TickComponent(
 		return;
 	}
 
+	const float cameraDeltaSeconds =
+		this->getClampedInputDeltaSeconds(DeltaTime);
+	if (!this->isDragging &&
+		(!FMath::IsNearlyZero(this->pendingMoveXAxis) ||
+			!FMath::IsNearlyZero(this->pendingMoveYAxis)))
+	{
+		const FVector worldMovement =
+			this->rootComponent->GetRightVector() * this->pendingMoveXAxis +
+			this->rootComponent->GetForwardVector() * this->pendingMoveYAxis;
+		const FVector2D horizontalMovement(
+			worldMovement.X,
+			worldMovement.Y);
+		this->requestCameraMovement(
+			horizontalMovement.X,
+			horizontalMovement.Y,
+			horizontalMovement.Size(),
+			cameraDeltaSeconds);
+	}
+
+	if (this->springArmComponent &&
+		!FMath::IsNearlyEqual(
+			this->springArmComponent->TargetArmLength,
+			this->desiredZoomLength,
+			0.1f))
+	{
+		this->springArmComponent->TargetArmLength = FMath::FInterpTo(
+			this->springArmComponent->TargetArmLength,
+			this->desiredZoomLength,
+			cameraDeltaSeconds,
+			this->zoomCatchupSpeed);
+		this->applyCameraStateChange();
+	}
+
 	FVector2D pointerPosition = FVector2D::ZeroVector;
 	if (!this->realTimeStrategyPlayerController->GetMousePosition(
 		pointerPosition.X,
 		pointerPosition.Y))
 	{
-		this->SetComponentTickEnabled(false);
 		return;
 	}
 
 	if (!this->isDragging)
 	{
-		this->executeEdgeScrollingEvaluation(pointerPosition);
+		this->executeEdgeScrollingEvaluation(
+			pointerPosition,
+			cameraDeltaSeconds);
 	}
 
 	// Units and the camera can move beneath a stationary pointer. Keep this
@@ -298,13 +334,11 @@ void URTSCamera::onZoomCameraActionTriggered(const FInputActionValue& value)
 		this->minimumZoomLength,
 		this->maximumZoomLength
 	);
-	this->springArmComponent->TargetArmLength = this->desiredZoomLength;
 
 	const float zoomRange = FMath::Max(this->maximumZoomLength - this->minimumZoomLength, UE_SMALL_NUMBER);
 	const float speedAlpha = (this->desiredZoomLength - this->minimumZoomLength) / zoomRange;
 	this->currentMovementSpeed = FMath::Lerp(this->minMovementSpeed, this->maxMovementSpeed, speedAlpha);
 
-	this->applyCameraStateChange();
 }
 
 void URTSCamera::onRotateCameraActionTriggered(const FInputActionValue& value)
@@ -357,22 +391,24 @@ void URTSCamera::onTurnCameraRightActionTriggered(const FInputActionValue&)
 
 void URTSCamera::onMoveCameraYAxisActionTriggered(const FInputActionValue& value)
 {
-	/// 处理纵向平移请求
-	this->requestCameraMovement(
-		this->rootComponent->GetForwardVector().X,
-		this->rootComponent->GetForwardVector().Y,
-		value.Get<float>()
-	);
+	/// 只记录纵向意图，位移由相机 Tick 统一积分。
+	this->pendingMoveYAxis = value.Get<float>();
+}
+
+void URTSCamera::onMoveCameraYAxisActionCompleted(const FInputActionValue&)
+{
+	this->pendingMoveYAxis = 0.0f;
 }
 
 void URTSCamera::onMoveCameraXAxisActionTriggered(const FInputActionValue& value)
 {
-	/// 处理横向平移请求
-	this->requestCameraMovement(
-		this->rootComponent->GetRightVector().X,
-		this->rootComponent->GetRightVector().Y,
-		value.Get<float>()
-	);
+	/// 只记录横向意图，位移由相机 Tick 统一积分。
+	this->pendingMoveXAxis = value.Get<float>();
+}
+
+void URTSCamera::onMoveCameraXAxisActionCompleted(const FInputActionValue&)
+{
+	this->pendingMoveXAxis = 0.0f;
 }
 
 void URTSCamera::onDragCameraActionStarted(const FInputActionValue&)
@@ -396,7 +432,11 @@ void URTSCamera::onDragCameraActionCompleted(const FInputActionValue&)
 	}
 }
 
-void URTSCamera::requestCameraMovement(const float xAxisValue, const float yAxisValue, const float movementScale)
+void URTSCamera::requestCameraMovement(
+	const float xAxisValue,
+	const float yAxisValue,
+	const float movementScale,
+	const float DeltaSeconds)
 {
 	if (!this->rootComponent || FMath::IsNearlyZero(movementScale))
 	{
@@ -409,7 +449,7 @@ void URTSCamera::requestCameraMovement(const float xAxisValue, const float yAxis
 		return;
 	}
 
-	directionVector *= this->currentMovementSpeed * movementScale * this->getClampedInputDeltaSeconds();
+	directionVector *= this->currentMovementSpeed * movementScale * DeltaSeconds;
 	const FVector currentLocation = this->rootComponent->GetComponentLocation();
 	this->rootComponent->SetWorldLocation(
 		FVector(currentLocation.X + directionVector.X, currentLocation.Y + directionVector.Y, currentLocation.Z));
@@ -555,7 +595,11 @@ void URTSCamera::bindActionCallbacks()
 		enhancedInputComponent->BindAction(this->turnCameraLeftAction, ETriggerEvent::Started, this, &URTSCamera::onTurnCameraLeftActionTriggered);
 		enhancedInputComponent->BindAction(this->turnCameraRightAction, ETriggerEvent::Started, this, &URTSCamera::onTurnCameraRightActionTriggered);
 		enhancedInputComponent->BindAction(this->moveCameraXAxisAction, ETriggerEvent::Triggered, this, &URTSCamera::onMoveCameraXAxisActionTriggered);
+		enhancedInputComponent->BindAction(this->moveCameraXAxisAction, ETriggerEvent::Completed, this, &URTSCamera::onMoveCameraXAxisActionCompleted);
+		enhancedInputComponent->BindAction(this->moveCameraXAxisAction, ETriggerEvent::Canceled, this, &URTSCamera::onMoveCameraXAxisActionCompleted);
 		enhancedInputComponent->BindAction(this->moveCameraYAxisAction, ETriggerEvent::Triggered, this, &URTSCamera::onMoveCameraYAxisActionTriggered);
+		enhancedInputComponent->BindAction(this->moveCameraYAxisAction, ETriggerEvent::Completed, this, &URTSCamera::onMoveCameraYAxisActionCompleted);
+		enhancedInputComponent->BindAction(this->moveCameraYAxisAction, ETriggerEvent::Canceled, this, &URTSCamera::onMoveCameraYAxisActionCompleted);
 		enhancedInputComponent->BindAction(this->dragCameraAction, ETriggerEvent::Started, this, &URTSCamera::onDragCameraActionStarted);
 		enhancedInputComponent->BindAction(this->dragCameraAction, ETriggerEvent::Completed, this, &URTSCamera::onDragCameraActionCompleted);
 		enhancedInputComponent->BindAction(this->dragCameraAction, ETriggerEvent::Canceled, this, &URTSCamera::onDragCameraActionCompleted);
@@ -611,15 +655,17 @@ void URTSCamera::HandlePointerMoved(const FVector2D& ViewportPosition)
 		this->requestCameraMovement(
 			horizontalMovement.X,
 			horizontalMovement.Y,
-			horizontalMovement.Size());
+			horizontalMovement.Size(),
+			this->getClampedInputDeltaSeconds(FApp::GetDeltaTime()));
 		return;
 	}
 
 	this->SetComponentTickEnabled(true);
-	this->executeEdgeScrollingEvaluation(ViewportPosition);
 }
 
-bool URTSCamera::executeEdgeScrollingEvaluation(const FVector2D& ViewportPosition)
+bool URTSCamera::executeEdgeScrollingEvaluation(
+	const FVector2D& ViewportPosition,
+	const float DeltaSeconds)
 {
 	if (!this->enableEdgeScrolling)
 	{
@@ -661,7 +707,8 @@ bool URTSCamera::executeEdgeScrollingEvaluation(const FVector2D& ViewportPositio
 	this->requestCameraMovement(
 		horizontalMovement.X,
 		horizontalMovement.Y,
-		horizontalMovement.Size());
+		horizontalMovement.Size(),
+		DeltaSeconds);
 	return true;
 }
 
@@ -761,9 +808,13 @@ bool URTSCamera::getViewportSizePixels(FVector2D& OutViewportSize) const
 	return OutViewportSize.X > UE_SMALL_NUMBER && OutViewportSize.Y > UE_SMALL_NUMBER;
 }
 
-float URTSCamera::getClampedInputDeltaSeconds() const
+float URTSCamera::getClampedInputDeltaSeconds(
+	const float DeltaSeconds) const
 {
-	return FMath::Clamp(static_cast<float>(FApp::GetDeltaTime()), 0.0f, MaxCameraInputDeltaSeconds);
+	return FMath::Clamp(
+		DeltaSeconds,
+		0.0f,
+		MaxCameraInputDeltaSeconds);
 }
 
 void URTSCamera::rectifyRootHeightFromTerrain()

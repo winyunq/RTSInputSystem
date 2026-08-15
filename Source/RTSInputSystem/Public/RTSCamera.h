@@ -255,6 +255,7 @@ protected:
 	 * @param       参数名称: value                         数据类型:        const FInputActionValue&
 	 **/
 	void onMoveCameraYAxisActionTriggered(const FInputActionValue& value);
+	void onMoveCameraYAxisActionCompleted(const FInputActionValue& value);
 
 	/**
 	 * @brief       响应增强输入事件。请求横向平移指令。
@@ -262,6 +263,7 @@ protected:
 	 * @param       参数名称: value                         数据类型:        const FInputActionValue&
 	 **/
 	void onMoveCameraXAxisActionTriggered(const FInputActionValue& value);
+	void onMoveCameraXAxisActionCompleted(const FInputActionValue& value);
 
 	/**
 	 * @brief       响应增强输入事件。控制鼠标拖拽状态下的相机平移逻辑。
@@ -272,13 +274,17 @@ protected:
 	void onDragCameraActionCompleted(const FInputActionValue& value);
 
 	/**
-	 * @brief       将坐标移动意图立即转化为相机位移
+	 * @brief       将已组合的移动意图按相机帧 DeltaTime 积分为位移
 	 * 
 	 * @param       xAxisValue                      数据类型:        float
 	 * @param       yAxisValue                      数据类型:        float
 	 * @param       movementScale                   数据类型:        float
 	 **/
-	void requestCameraMovement(float xAxisValue, float yAxisValue, float movementScale);
+	void requestCameraMovement(
+		float xAxisValue,
+		float yAxisValue,
+		float movementScale,
+		float DeltaSeconds);
 
 	/// 组件所属的 Actor 引用，定义了相机的生命周期主体
 	UPROPERTY()
@@ -319,7 +325,9 @@ private:
 	void registerInputMappingContext();
 	void bindActionCallbacks();
 
-	bool executeEdgeScrollingEvaluation(const FVector2D& ViewportPosition);
+	bool executeEdgeScrollingEvaluation(
+		const FVector2D& ViewportPosition,
+		float DeltaSeconds);
 	void refreshPointerWorldState(const FVector2D& ViewportPosition);
 
 	void handleFollowTargetTransformUpdated(
@@ -330,7 +338,7 @@ private:
 	void recalculateBoundaryReachFactors(const FVector2D& ViewportSize);
 	void applyCameraStateChange();
 	bool getViewportSizePixels(FVector2D& OutViewportSize) const;
-	float getClampedInputDeltaSeconds() const;
+	float getClampedInputDeltaSeconds(float DeltaSeconds) const;
 	void rectifyRootHeightFromTerrain();
 	
 	/** @brief 计算当前坐标下的边界补偿并应用 */
@@ -371,6 +379,10 @@ private:
 	/// 当前瞬时计算的相机移动速度值
 	UPROPERTY()
 	float currentMovementSpeed;
+
+	/// Enhanced Input 事件只更新轴意图，由相机 Tick 统一积分。
+	float pendingMoveXAxis = 0.0f;
+	float pendingMoveYAxis = 0.0f;
 
 public:
 	/// 静态数组，存储由视野投影计算出的地平面四个接地区顶点。
