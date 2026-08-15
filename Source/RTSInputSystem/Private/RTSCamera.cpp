@@ -190,6 +190,10 @@ URTSCamera::URTSCamera()
 void URTSCamera::BeginPlay()
 {
 	Super::BeginPlay();
+	// Blueprint component templates created before the camera Tick was restored
+	// may still carry a disabled tick flag. Runtime camera motion always needs it.
+	this->PrimaryComponentTick.bCanEverTick = true;
+	this->SetComponentTickEnabled(true);
 
 	const auto netMode = this->GetNetMode();
 	if (netMode != NM_DedicatedServer)
@@ -238,7 +242,6 @@ void URTSCamera::TickComponent(
 		!this->realTimeStrategyPlayerController ||
 		this->realTimeStrategyPlayerController->GetViewTarget() != this->cameraOwner)
 	{
-		this->SetComponentTickEnabled(false);
 		return;
 	}
 
@@ -626,7 +629,6 @@ void URTSCamera::HandlePointerMoved(const FVector2D& ViewportPosition)
 	if (!this->rootComponent || !this->realTimeStrategyPlayerController ||
 		this->realTimeStrategyPlayerController->GetViewTarget() != this->cameraOwner)
 	{
-		this->SetComponentTickEnabled(false);
 		return;
 	}
 
