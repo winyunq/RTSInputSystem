@@ -60,7 +60,7 @@ public:
 	void jumpTo(FVector position);
 
 	/**
-	 * @brief       由视口的 Slate 鼠标移动事件转发，驱动拖拽并启停按需边缘滚动。
+	 * @brief       由视口的 Slate 鼠标移动事件转发，即时驱动拖拽和边缘滚动。
 	 *
 	 * @param       ViewportPosition 当前鼠标在视口像素坐标系中的位置。
 	 **/

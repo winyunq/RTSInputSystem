@@ -141,7 +141,7 @@ URTSCamera::URTSCamera()
 {
 	/// 设置组件基本生存期属性
 	PrimaryComponentTick.bCanEverTick = true;
-	PrimaryComponentTick.bStartWithTickEnabled = false;
+	PrimaryComponentTick.bStartWithTickEnabled = true;
 	this->collisionChannel = ECC_WorldStatic;
 	this->dragExtent = 0.6f;
 	this->distanceFromEdgeThreshold = 0.1f;
@@ -232,7 +232,7 @@ void URTSCamera::TickComponent(
 {
 	Super::TickComponent(DeltaTime, TickType, ThisTickFunction);
 
-	if (this->isDragging || !this->rootComponent ||
+	if (!this->rootComponent ||
 		!this->realTimeStrategyPlayerController ||
 		this->realTimeStrategyPlayerController->GetViewTarget() != this->cameraOwner)
 	{
@@ -243,15 +243,19 @@ void URTSCamera::TickComponent(
 	FVector2D pointerPosition = FVector2D::ZeroVector;
 	if (!this->realTimeStrategyPlayerController->GetMousePosition(
 		pointerPosition.X,
-		pointerPosition.Y) ||
-		!this->executeEdgeScrollingEvaluation(pointerPosition))
+		pointerPosition.Y))
 	{
 		this->SetComponentTickEnabled(false);
 		return;
 	}
 
-	// The world beneath a stationary pointer changes while edge scrolling.
-	// Refresh hover/build previews only during this explicitly active camera Tick.
+	if (!this->isDragging)
+	{
+		this->executeEdgeScrollingEvaluation(pointerPosition);
+	}
+
+	// Units and the camera can move beneath a stationary pointer. Keep this
+	// frontend-only refresh independent from simulation progress notifications.
 	this->refreshPointerWorldState(pointerPosition);
 }
 
@@ -373,7 +377,6 @@ void URTSCamera::onMoveCameraXAxisActionTriggered(const FInputActionValue& value
 
 void URTSCamera::onDragCameraActionStarted(const FInputActionValue&)
 {
-	this->SetComponentTickEnabled(false);
 	this->isDragging = this->realTimeStrategyPlayerController &&
 		this->realTimeStrategyPlayerController->GetMousePosition(
 			this->dragInteractionInitialLocation.X,
@@ -563,6 +566,7 @@ void URTSCamera::setActiveCamera()
 {
 	/// 将玩家当前的渲染视角强制聚焦于此组件
 	this->realTimeStrategyPlayerController->SetViewTarget(this->GetOwner());
+	this->SetComponentTickEnabled(true);
 }
 
 void URTSCamera::jumpTo(const FVector position)
@@ -584,7 +588,7 @@ void URTSCamera::HandlePointerMoved(const FVector2D& ViewportPosition)
 
 	if (this->isDragging)
 	{
-		this->SetComponentTickEnabled(false);
+		this->SetComponentTickEnabled(true);
 		FVector2D viewportSizeExtent = FVector2D::ZeroVector;
 		if (!this->getViewportSizePixels(viewportSizeExtent))
 		{
@@ -611,8 +615,8 @@ void URTSCamera::HandlePointerMoved(const FVector2D& ViewportPosition)
 		return;
 	}
 
-	this->SetComponentTickEnabled(
-		this->executeEdgeScrollingEvaluation(ViewportPosition));
+	this->SetComponentTickEnabled(true);
+	this->executeEdgeScrollingEvaluation(ViewportPosition);
 }
 
 bool URTSCamera::executeEdgeScrollingEvaluation(const FVector2D& ViewportPosition)
