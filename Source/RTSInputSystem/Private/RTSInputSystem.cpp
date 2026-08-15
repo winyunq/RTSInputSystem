@@ -34,6 +34,7 @@ void FRTSInputSystemModule::StartupModule()
 	TagsManager.AddNativeGameplayTag(FName(TEXT("RTS.Command.Build.FieldCover")), TEXT("Officer orders nearby infantry to construct the merged sandbag field cover."));
 	TagsManager.AddNativeGameplayTag(FName(TEXT("RTS.Command.Build.MachineGunBunker")), TEXT("Officer orders nearby infantry to construct a turreted machine-gun bunker."));
 	TagsManager.AddNativeGameplayTag(FName(TEXT("RTS.Command.Build.AntiTankBunker")), TEXT("Officer orders nearby infantry to construct a turreted anti-tank bunker."));
+	TagsManager.AddNativeGameplayTag(FName(TEXT("RTS.Command.Build.AntiAircraftEmplacement")), TEXT("Officer orders nearby infantry to construct a twin-autocannon anti-aircraft emplacement."));
 	TagsManager.AddNativeGameplayTag(FName(TEXT("RTS.Command.Build.AntiTankObstacle")), TEXT("Officer orders nearby infantry to construct anti-tank obstacles."));
 	TagsManager.AddNativeGameplayTag(FName(TEXT("RTS.Command.Build.BarbedWire")), TEXT("Officer orders nearby infantry to construct barbed wire."));
 	TagsManager.AddNativeGameplayTag(FName(TEXT("RTS.Command.Build.Production")), TEXT("Officer constructs and enters a production building."));

@@ -20,6 +20,7 @@
 #include "Commands/RTSCityCommands.h"
 #include "Commands/RTSUnitCommands.h"
 #include "Components/MassBattleAgentComponent.h"
+#include "DataAssets/MassBattleAgentConfigDataAsset.h"
 #include "Fragments/Health.h"
 #include "Fragments/Network.h"
 #include "Fragments/SubType.h"
@@ -477,7 +478,21 @@ namespace
 
 		static TMap<int32, UTexture2D*> IconCache;
 
-		const int32 IconIndex = static_cast<int32>(Seed % UE_ARRAY_COUNT(DefaultIconFiles));
+		int32 IconIndex = INDEX_NONE;
+		if (Seed >= 3201u && Seed <= 3221u)
+		{
+			// MassBattle's adopted WW2 infantry table numbers German portraits from 3201.
+			IconIndex = static_cast<int32>(Seed - 3201u);
+		}
+		else if (Seed >= 3222u && Seed <= 3244u)
+		{
+			// Japanese portraits start at 3222 and occupy the second 23-image bank.
+			IconIndex = 23 + static_cast<int32>(Seed - 3222u);
+		}
+		else
+		{
+			IconIndex = static_cast<int32>(Seed % UE_ARRAY_COUNT(DefaultIconFiles));
+		}
 		if (UTexture2D** CachedTexture = IconCache.Find(IconIndex))
 		{
 			if (IsValid(*CachedTexture))
@@ -595,10 +610,9 @@ namespace
 		{
 			Data.Icon = LoadDefaultUnitPanelIconBySeed(IconSeed);
 		}
-
 		if (!Data.Portrait)
 		{
-			Data.Portrait = LoadDefaultUnitAvatarBySeed(IconSeed);
+			Data.Portrait = Data.Icon;
 		}
 	}
 
@@ -610,6 +624,7 @@ namespace
 		}
 
 		Data.TypeKey = GetMassProtocolTypeKey(Protocol, SubTypeIndex);
+		Data.UnitAssetPath = Protocol->UnitAssetPath;
 		Data.UnitTypeTag = Protocol->UnitTypeTag;
 		const FString ProtocolRole = Protocol->Role.TrimStartAndEnd();
 		if (!ProtocolRole.IsEmpty())
@@ -625,7 +640,6 @@ namespace
 		{
 			Data.Icon = ProtocolIcon;
 		}
-
 		if (UTexture2D* ProtocolPortrait = LoadConfiguredTexture(Protocol->Portrait))
 		{
 			Data.Portrait = ProtocolPortrait;
@@ -730,29 +744,11 @@ namespace
 		}
 		if (TagName == FName(TEXT("RTS.Command.Build.TankFactory")))
 		{
-			URTSCommandButton* Button = NewObject<URTSCommandButton>(Outer);
-			Button->CommandTag = CommandTag;
-			Button->TargetType = ERTSCommandTargetType::Location;
-			Button->DisplayName = FText::FromString(TEXT("建造坦克工厂"));
-			Button->Description = FText::FromString(TEXT("选择网格后，系统指派最近的空闲同队军官建造4×4格坦克工厂；该建筑生产本国的装甲单位实现。按住Shift可追加并行施工命令。"));
-			Button->PreferredIndex = 1;
-			Button->LowValueCost = 400;
-			Button->HighValueCost = 100;
-			Button->PlacementFootprintCells = FIntPoint(4, 4);
-			return Button;
+			return NewObject<URTSCmd_BuildTankFactory>(Outer);
 		}
 		if (TagName == FName(TEXT("RTS.Command.Build.VehicleFactory")))
 		{
-			URTSCommandButton* Button = NewObject<URTSCommandButton>(Outer);
-			Button->CommandTag = CommandTag;
-			Button->TargetType = ERTSCommandTargetType::Location;
-			Button->DisplayName = FText::FromString(TEXT("建造战车工厂"));
-			Button->Description = FText::FromString(TEXT("选择网格后，系统指派最近的空闲同队军官建造4×4格战车工厂；该建筑生产防空、反坦克炮、自行火炮与支援车辆。按住Shift可追加并行施工命令。"));
-			Button->PreferredIndex = 2;
-			Button->LowValueCost = 360;
-			Button->HighValueCost = 80;
-			Button->PlacementFootprintCells = FIntPoint(4, 4);
-			return Button;
+			return NewObject<URTSCmd_BuildVehicleFactory>(Outer);
 		}
 		if (TagName == FName(TEXT("RTS.Command.Build.Defense")))
 		{
@@ -769,6 +765,10 @@ namespace
 		if (TagName == FName(TEXT("RTS.Command.Build.AntiTankBunker")))
 		{
 			return NewObject<URTSCmd_BuildAntiTankBunker>(Outer);
+		}
+		if (TagName == FName(TEXT("RTS.Command.Build.AntiAircraftEmplacement")))
+		{
+			return NewObject<URTSCmd_BuildAntiAircraftEmplacement>(Outer);
 		}
 		if (TagName == FName(TEXT("RTS.Command.Build.AntiTankObstacle")))
 		{
@@ -905,6 +905,12 @@ namespace
 				Button->DisplayName = FText::FromString(TEXT("反坦克碉堡"));
 				Button->Hotkey = EKeys::E;
 			}
+			else if (CommandName == FName(TEXT("RTS.Command.Build.AntiAircraftEmplacement")))
+			{
+				Button->PreferredIndex = 3;
+				Button->DisplayName = FText::FromString(TEXT("防空炮阵地"));
+				Button->Hotkey = EKeys::R;
+			}
 			else if (CommandName == FName(TEXT("RTS.Command.Build.AntiTankObstacle")))
 			{
 				Button->PreferredIndex = 10;
@@ -1011,40 +1017,78 @@ FString URTSSelectionSubsystem::GetMassSubtypeDisplayName(int32 SubTypeIndex) co
 	return GetDefaultMassSubtypeDisplayName(SubTypeIndex);
 }
 
-UTexture2D* URTSSelectionSubsystem::GetMassSubtypeUnitPanelIcon(int32 SubTypeIndex) const
+UTexture2D* URTSSelectionSubsystem::GetMassUnitPortrait(
+	FName UnitAssetKey,
+	int32 SubTypeIndex) const
 {
-	const URTSInputPanelSettings* Settings = GetDefault<URTSInputPanelSettings>();
-	if (const FRTSMassUnitTypeProtocol* Protocol = FindMassUnitTypeProtocolByIndex(Settings, SubTypeIndex))
+	const URTSInputPanelSettings* Settings = RTSUnitTypeProtocol::GetSettings();
+	const FRTSMassUnitTypeProtocol* Protocol =
+		RTSUnitTypeProtocol::FindByNetworkKeyOrSubType(
+			Settings,
+			UnitAssetKey,
+			SubTypeIndex);
+	int32 ResolvedSubTypeIndex = SubTypeIndex;
+	if (Protocol && ResolvedSubTypeIndex == INDEX_NONE && Settings)
 	{
+		const int32 ProtocolArrayIndex = static_cast<int32>(
+			Protocol - Settings->MassUnitTypeProtocols.GetData());
+		if (Settings->MassUnitTypeProtocols.IsValidIndex(ProtocolArrayIndex))
+		{
+			ResolvedSubTypeIndex = GetProtocolSubTypeIndex(
+				*Protocol,
+				ProtocolArrayIndex);
+		}
+	}
+	if (Protocol)
+	{
+		if (UTexture2D* ProtocolPortrait = LoadConfiguredTexture(Protocol->Portrait))
+		{
+			return ProtocolPortrait;
+		}
 		if (UTexture2D* ProtocolIcon = LoadConfiguredTexture(Protocol->Icon))
 		{
 			return ProtocolIcon;
 		}
 	}
 
-	return LoadDefaultUnitPanelIconBySeed(static_cast<uint32>(SubTypeIndex));
+	if (Settings && Settings->MassUnitAvatars.IsValidIndex(ResolvedSubTypeIndex))
+	{
+		if (UTexture2D* Avatar = LoadConfiguredTexture(
+			Settings->MassUnitAvatars[ResolvedSubTypeIndex].Avatar))
+		{
+			return Avatar;
+		}
+	}
+
+	if (ResolvedSubTypeIndex == INDEX_NONE)
+	{
+		return nullptr;
+	}
+
+	return LoadDefaultUnitPanelIconBySeed(static_cast<uint32>(ResolvedSubTypeIndex));
 }
 
-UTexture2D* URTSSelectionSubsystem::GetMassSubtypeUnitAvatar(int32 SubTypeIndex) const
+UTexture2D* URTSSelectionSubsystem::GetMassSubtypeUnitPanelIcon(int32 SubTypeIndex) const
 {
-	const URTSInputPanelSettings* Settings = GetDefault<URTSInputPanelSettings>();
-	if (const FRTSMassUnitTypeProtocol* Protocol = FindMassUnitTypeProtocolByIndex(Settings, SubTypeIndex))
+	const URTSInputPanelSettings* Settings = RTSUnitTypeProtocol::GetSettings();
+	if (const FRTSMassUnitTypeProtocol* Protocol =
+		RTSUnitTypeProtocol::FindBySubType(Settings, SubTypeIndex))
 	{
+		if (UTexture2D* ProtocolIcon = LoadConfiguredTexture(Protocol->Icon))
+		{
+			return ProtocolIcon;
+		}
 		if (UTexture2D* ProtocolPortrait = LoadConfiguredTexture(Protocol->Portrait))
 		{
 			return ProtocolPortrait;
 		}
 	}
+	return LoadDefaultUnitPanelIconBySeed(static_cast<uint32>(SubTypeIndex));
+}
 
-	if (Settings && Settings->MassUnitAvatars.IsValidIndex(SubTypeIndex))
-	{
-		if (UTexture2D* LegacyAvatar = LoadConfiguredTexture(Settings->MassUnitAvatars[SubTypeIndex].Avatar))
-		{
-			return LegacyAvatar;
-		}
-	}
-
-	return LoadDefaultUnitAvatarBySeed(static_cast<uint32>(SubTypeIndex));
+UTexture2D* URTSSelectionSubsystem::GetMassSubtypeUnitAvatar(int32 SubTypeIndex) const
+{
+	return GetMassUnitPortrait(NAME_None, SubTypeIndex);
 }
 
 void URTSSelectionSubsystem::SetSelectedUnits(const TArray<AActor*>& InActors, const TArray<FEntityHandle>& InEntities, ERTSSelectionModifier Modifier)
@@ -2528,11 +2572,23 @@ FRTSUnitData URTSSelectionSubsystem::CreateUnitDataFromActor(AActor* Actor) cons
 		Data.Name = Data.GroupKey;
 		Data.ActorPtr = Actor;
 		Data.bIsMassEntity = false;
+		if (const UMassBattleAgentComponent* MassAgent =
+			Actor->FindComponentByClass<UMassBattleAgentComponent>())
+		{
+			if (MassAgent->AgentConfigAsset)
+			{
+				// The avatar consumes the unit type asset and creates its own single
+				// representative entity; it never captures this battlefield actor.
+				Data.UnitAssetPath = MassAgent->AgentConfigAsset->GetPathName();
+			}
+		}
 
 		if (auto Selectable = Actor->FindComponentByClass<URTSSelectable>())
 		{
 			Data.Icon = Selectable->Icon;
-			Data.Portrait = Selectable->Avatar;
+			Data.Portrait = Selectable->Avatar
+				? Selectable->Avatar
+				: Selectable->Icon;
 			Data.Health = Selectable->Health;
 			Data.MaxHealth = Selectable->MaxHealth;
 			Data.Energy = Selectable->Energy;
@@ -2599,16 +2655,26 @@ FRTSUnitData URTSSelectionSubsystem::CreateUnitDataFromEntity(const FEntityHandl
 				if (const FSubType* SubFrag = EM.GetFragmentDataPtr<FSubType>(NativeHandle))
 				{
 					const int32 SubTypeIndex = SubFrag->Index;
-					const URTSInputPanelSettings* Settings = GetDefault<URTSInputPanelSettings>();
+					const URTSInputPanelSettings* Settings = RTSUnitTypeProtocol::GetSettings();
 					const FRTSMassUnitTypeProtocol* Protocol = FindMassUnitTypeProtocolForEntity(
 						Settings, EM, NativeHandle, SubTypeIndex);
+					const FNetworking* Networking =
+						EM.GetFragmentDataPtr<FNetworking>(NativeHandle);
+					const FString RuntimeUnitAssetPath = Networking
+						&& !Networking->Key.IsNone()
+						? Networking->Key.ToString()
+						: (Protocol ? Protocol->UnitAssetPath : FString());
 					Data.SubTypeIndex = SubTypeIndex;
 					Data.TypeKey = GetMassProtocolTypeKey(Protocol, SubTypeIndex);
 					Data.GroupKey = Data.TypeKey;
                     Data.Name = GetMassSubtypeDisplayName(SubTypeIndex);
+					const FName UnitAssetKey = !RuntimeUnitAssetPath.IsEmpty()
+						? FName(*RuntimeUnitAssetPath)
+						: NAME_None;
 					Data.Icon = GetMassSubtypeUnitPanelIcon(SubTypeIndex);
-					Data.Portrait = GetMassSubtypeUnitAvatar(SubTypeIndex);
+					Data.Portrait = GetMassUnitPortrait(UnitAssetKey, SubTypeIndex);
 					ApplyMassProtocolToUnitData(Data, Protocol, SubTypeIndex);
+					Data.UnitAssetPath = RuntimeUnitAssetPath;
 					Data.SelectionTags = BuildSelectionTags(
 						Data.TypeKey,
 						Data.Role,

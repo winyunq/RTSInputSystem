@@ -123,6 +123,28 @@ public:
 	}
 };
 
+/** Officer order: twin-autocannon anti-aircraft emplacement with a raised firing silhouette. */
+UCLASS()
+class RTSINPUTSYSTEM_API URTSCmd_BuildAntiAircraftEmplacement : public URTSBuiltinCommandButton
+{
+	GENERATED_BODY()
+public:
+	URTSCmd_BuildAntiAircraftEmplacement()
+	{
+		CommandTag = FGameplayTag::RequestGameplayTag(FName("RTS.Command.Build.AntiAircraftEmplacement"), false);
+		TargetType = ERTSCommandTargetType::Location;
+		DisplayName = FText::FromString(TEXT("防空炮阵地"));
+		Description = FText::FromString(TEXT("修建双联机关炮防空阵地，以高仰角火力保护附近部队和建筑。优先由附近同队步兵施工。"));
+		PreferredIndex = 3;
+		DefaultCooldown = 0.0f;
+		LowValueCost = 220;
+		HighValueCost = 40;
+		PlacementFootprintCells = FIntPoint(2, 2);
+		PlacementPreviewMesh = TSoftObjectPtr<UStaticMesh>(FSoftObjectPath(TEXT(
+			"/Game/Unit/Actor/Building/Defence/AntiAircraftEmplacement/Common_AntiAircraftEmplacement_TwinAutocannon/SM_Common_AntiAircraftEmplacement_TwinAutocannon.SM_Common_AntiAircraftEmplacement_TwinAutocannon")));
+	}
+};
+
 /** Officer order: hexagonal anti-tank trench and obstacle position. */
 UCLASS()
 class RTSINPUTSYSTEM_API URTSCmd_BuildAntiTankObstacle : public URTSBuiltinCommandButton
@@ -205,8 +227,52 @@ public:
 		PreferredIndex = 7; // Row 2, Col 3
 		DefaultCooldown = 0.0f;
         
-        LowValueCost = 150;
-		PlacementFootprintCells = FIntPoint(1, 1);
+		LowValueCost = 150;
+		PlacementFootprintCells = FIntPoint(3, 3);
+		PlacementPreviewMesh = TSoftObjectPtr<UStaticMesh>(FSoftObjectPath(TEXT(
+			"/Game/Unit/Actor/Building/Production/Barracks/Common_Barracks_FieldCamp/SM_Common_Barracks_FieldCamp.SM_Common_Barracks_FieldCamp")));
+	}
+};
+
+/** Officer order: formal 4x4 tank factory with a concrete placement preview. */
+UCLASS()
+class RTSINPUTSYSTEM_API URTSCmd_BuildTankFactory : public URTSBuiltinCommandButton
+{
+	GENERATED_BODY()
+public:
+	URTSCmd_BuildTankFactory()
+	{
+		CommandTag = FGameplayTag::RequestGameplayTag(FName("RTS.Command.Build.TankFactory"), false);
+		TargetType = ERTSCommandTargetType::Location;
+		DisplayName = FText::FromString(TEXT("建造坦克工厂"));
+		Description = FText::FromString(TEXT("建造4×4格坦克工厂，生产本国装甲单位。按住Shift可追加并行施工命令。"));
+		PreferredIndex = 1;
+		LowValueCost = 400;
+		HighValueCost = 100;
+		PlacementFootprintCells = FIntPoint(4, 4);
+		PlacementPreviewMesh = TSoftObjectPtr<UStaticMesh>(FSoftObjectPath(TEXT(
+			"/Game/Unit/Actor/Building/Production/TankFactory/SM_TankFactory.SM_TankFactory")));
+	}
+};
+
+/** Officer order: formal 4x4 vehicle and artillery works. */
+UCLASS()
+class RTSINPUTSYSTEM_API URTSCmd_BuildVehicleFactory : public URTSBuiltinCommandButton
+{
+	GENERATED_BODY()
+public:
+	URTSCmd_BuildVehicleFactory()
+	{
+		CommandTag = FGameplayTag::RequestGameplayTag(FName("RTS.Command.Build.VehicleFactory"), false);
+		TargetType = ERTSCommandTargetType::Location;
+		DisplayName = FText::FromString(TEXT("建造战车工厂"));
+		Description = FText::FromString(TEXT("建造4×4格战车与火炮车间，生产防空、反坦克炮、自行火炮和支援车辆。按住Shift可追加并行施工命令。"));
+		PreferredIndex = 2;
+		LowValueCost = 360;
+		HighValueCost = 80;
+		PlacementFootprintCells = FIntPoint(4, 4);
+		PlacementPreviewMesh = TSoftObjectPtr<UStaticMesh>(FSoftObjectPath(TEXT(
+			"/Game/Unit/Actor/Building/Production/VehicleFactory/Common_VehicleFactory_ArtilleryWorks/SM_Common_VehicleFactory_ArtilleryWorks.SM_Common_VehicleFactory_ArtilleryWorks")));
 	}
 };
 

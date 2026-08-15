@@ -240,18 +240,20 @@ void URTSUnitPanelWidget::ApplyFixedPanelSlotLayout()
 
 	if (UBorder* UnitPanelFrameBorder = Cast<UBorder>(UnitPanelFrame))
 	{
-		UnitPanelFrameBorder->SetBrushColor(FLinearColor::White);
+		UnitPanelFrameBorder->SetBrushColor(FLinearColor(0.006f, 0.018f, 0.028f, 0.98f));
+		UnitPanelFrameBorder->SetPadding(FMargin(8.0f));
 	}
 
 	if (UBorder* UnitRosterPaneBorder = Cast<UBorder>(UnitRosterPane))
 	{
-		UnitRosterPaneBorder->SetBrushColor(FLinearColor::White);
+		UnitRosterPaneBorder->SetBrushColor(FLinearColor(0.012f, 0.036f, 0.052f, 0.97f));
+		UnitRosterPaneBorder->SetPadding(FMargin(6.0f));
 	}
 
 	if (UBorder* UnitIdentityPaneWidget = Cast<UBorder>(FindDescendantWidgetByName(Cast<UWidget>(this), TEXT("UnitIdentityPane"))))
 	{
 		SetAutoFillWidthCenterSlot(UnitIdentityPaneWidget);
-		UnitIdentityPaneWidget->SetBrushColor(FLinearColor::White);
+		UnitIdentityPaneWidget->SetBrushColor(FLinearColor(0.018f, 0.052f, 0.072f, 0.98f));
 		UnitIdentityPaneWidget->SetPadding(FMargin(18.0f, 14.0f, 18.0f, 14.0f));
 	}
 

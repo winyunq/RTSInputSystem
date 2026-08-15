@@ -57,6 +57,14 @@ struct RTSINPUTSYSTEM_API FRTSTimedCommandInstance
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, SaveGame, Category = "RTS Command")
 	float DurationSeconds = 0.0f;
 
+	// Optional presentation clock authored by a deterministic MassBattle command.
+	// The UI derives progress locally; these fields never advance simulation.
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Transient, NotReplicated, Category = "RTS Command")
+	int32 SimulationStartTick = INDEX_NONE;
+
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Transient, NotReplicated, Category = "RTS Command")
+	int32 SimulationEndTick = INDEX_NONE;
+
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, SaveGame, Category = "RTS Command")
 	int32 LaneIndex = INDEX_NONE;
 
@@ -86,10 +94,8 @@ struct RTSINPUTSYSTEM_API FRTSTimedCommandInstance
 	}
 };
 
-/**
- * The state transition used by every timed command. These functions only
- * transform command state; they contain no domain-specific branches.
- */
+// The state transition used by every timed command. These functions only
+// transform command state; they contain no domain-specific branches.
 struct RTSINPUTSYSTEM_API FRTSTimedCommandMath
 {
 	static FRTSTimedCommandInstance Create(

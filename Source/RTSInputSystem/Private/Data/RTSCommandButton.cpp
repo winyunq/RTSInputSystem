@@ -71,6 +71,13 @@ bool URTSCommandButton::IsAutoCastEnabledForContext_Implementation(UObject* Worl
     return false;
 }
 
+bool URTSCommandButton::IsAvailableForContext_Implementation(
+	UObject* WorldContextObject,
+	AActor* Executor) const
+{
+	return true;
+}
+
 int32 URTSCommandButton::GetQueueCountForContext_Implementation(UObject* WorldContextObject, AActor* Executor) const
 {
 	return 0;

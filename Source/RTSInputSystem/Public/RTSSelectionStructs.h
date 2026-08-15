@@ -84,6 +84,10 @@ struct FRTSUnitData
 	UPROPERTY(BlueprintReadOnly, Category = "RTS Selection")
 	FString TypeKey;
 
+	/** Exact source unit asset used to resolve the same portrait and 3D preview everywhere. */
+	UPROPERTY(BlueprintReadOnly, Category = "RTS Selection")
+	FString UnitAssetPath;
+
 	UPROPERTY(BlueprintReadOnly, Category = "RTS Selection")
 	int32 SubTypeIndex = INDEX_NONE;
 
@@ -97,11 +101,11 @@ struct FRTSUnitData
 	UPROPERTY(BlueprintReadOnly, Category = "RTS Selection")
 	FString Role;
 
-	/** Small unit icon used inside the RTS unit panel, selection grid, and summary cells. */
+	/** Compact icon used by selection grids and summary cells. */
 	UPROPERTY(BlueprintReadOnly, Category = "RTS Selection")
 	UTexture2D* Icon = nullptr;
 
-	/** Larger avatar/portrait for the left-side single-selection detail panel. Kept separate from Icon. */
+	/** Canonical portrait used by production buttons, production progress, detail, and portrait windows. */
 	UPROPERTY(BlueprintReadOnly, Category = "RTS Selection")
 	UTexture2D* Portrait = nullptr;
 

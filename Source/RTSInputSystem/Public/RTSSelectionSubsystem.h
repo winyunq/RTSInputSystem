@@ -269,6 +269,7 @@ public:
 
 	/** Shared unit presentation lookup for command buttons and other selection-driven UI. */
 	FString GetMassSubtypeDisplayName(int32 SubTypeIndex) const;
+	UTexture2D* GetMassUnitPortrait(FName UnitAssetKey, int32 SubTypeIndex) const;
 	UTexture2D* GetMassSubtypeUnitPanelIcon(int32 SubTypeIndex) const;
 	UTexture2D* GetMassSubtypeUnitAvatar(int32 SubTypeIndex) const;
 

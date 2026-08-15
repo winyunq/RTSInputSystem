@@ -14,6 +14,7 @@
 #include "Materials/MaterialInstanceDynamic.h"
 #include "UI/RTSCommanderGridWidget.h"
 #include "Engine/World.h"
+#include "Subsystems/MassBattleSubsystem.h"
 #include "TimerManager.h"
 
 TSharedRef<SWidget> URTSCommandButtonWidget::RebuildWidget()
@@ -116,6 +117,21 @@ void URTSCommandButtonWidget::NativeTick(
 		return;
 	}
 
+	if (ProgressSimulationStartTick != INDEX_NONE
+		&& ProgressSimulationEndTick > ProgressSimulationStartTick)
+	{
+		const UMassBattleSubsystem* MassBattle =
+			UMassBattleSubsystem::GetPtr(this);
+		const int32 CurrentTick = MassBattle
+			? MassBattle->GetTickCount() : ProgressSimulationStartTick;
+		const float Progress = static_cast<float>(
+			CurrentTick - ProgressSimulationStartTick)
+			/ static_cast<float>(
+				ProgressSimulationEndTick - ProgressSimulationStartTick);
+		ActivityProgressBar->SetPercent(FMath::Clamp(Progress, 0.0f, 0.999f));
+		return;
+	}
+
 	const UWorld* World = GetWorld();
 	const float PresentationElapsed = ProgressSnapshotElapsedSeconds
 		+ (World
@@ -137,6 +153,8 @@ void URTSCommandButtonWidget::Init(URTSCommandButton* InData, AActor* InContext,
 	ProgressSnapshotElapsedSeconds = 0.0f;
 	ProgressDurationSeconds = 0.0f;
 	ProgressSnapshotWorldSeconds = 0.0f;
+	ProgressSimulationStartTick = INDEX_NONE;
+	ProgressSimulationEndTick = INDEX_NONE;
 	SetRenderOpacity(1.0f);
     ButtonData = InData;
     ContextActor = InContext;
@@ -295,6 +313,8 @@ void URTSCommandButtonWidget::InitProgressItem(
 	ProgressSnapshotElapsedSeconds = FMath::Max(0.0f, ProgressItem.ElapsedSeconds);
 	ProgressDurationSeconds = FMath::Max(0.0f, ProgressItem.DurationSeconds);
 	ProgressSnapshotWorldSeconds = GetWorld() ? GetWorld()->GetTimeSeconds() : 0.0f;
+	ProgressSimulationStartTick = ProgressItem.SimulationStartTick;
+	ProgressSimulationEndTick = ProgressItem.SimulationEndTick;
 
 	if (HotkeyText)
 	{

@@ -163,11 +163,11 @@ struct FRTSMassUnitTypeProtocol
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "RTS Mass Unit Protocol")
 	FString Role;
 
-	/** Small icon for selection list/summary. */
+	/** Compact icon used by selection grids and summary cells. */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "RTS Mass Unit Protocol")
 	TSoftObjectPtr<UTexture2D> Icon;
 
-	/** Larger avatar/portrait for the left-side single-selection detail panel. Separate from Icon. */
+	/** Canonical portrait used by production, progress, detail, and portrait-window UI. Falls back to Icon. */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "RTS Mass Unit Protocol")
 	TSoftObjectPtr<UTexture2D> Portrait;
 

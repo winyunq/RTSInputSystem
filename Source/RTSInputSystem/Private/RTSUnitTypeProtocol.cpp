@@ -61,6 +61,12 @@ namespace
 				Slot.DisplayName = TEXT("沙袋堑壕");
 				Slot.Hotkey = FName(TEXT("Q"));
 			}
+			else if (CommandName == FName(TEXT("RTS.Command.Build.AntiAircraftEmplacement")))
+			{
+				Slot.SlotIndex = 3;
+				Slot.DisplayName = TEXT("防空炮阵地");
+				Slot.Hotkey = FName(TEXT("R"));
+			}
 			else if (CommandName == FName(TEXT("RTS.Command.Build.AntiTankObstacle")))
 			{
 				Slot.SlotIndex = 10;
@@ -521,6 +527,7 @@ bool FRTSOfficerCommandCardTest::RunTest(const FString& Parameters)
 		TestCommandSlot(TEXT("RTS.Command.Build.FieldCover"), 0);
 		TestCommandSlot(TEXT("RTS.Command.Build.MachineGunBunker"), 1);
 		TestCommandSlot(TEXT("RTS.Command.Build.AntiTankBunker"), 2);
+		TestCommandSlot(TEXT("RTS.Command.Build.AntiAircraftEmplacement"), 3);
 		TestCommandSlot(TEXT("RTS.Command.Build.AntiTankObstacle"), 10);
 		TestCommandSlot(TEXT("RTS.Command.Build.BarbedWire"), 11);
 	}

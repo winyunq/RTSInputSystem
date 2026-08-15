@@ -111,6 +111,8 @@ protected:
 	float ProgressSnapshotElapsedSeconds = 0.0f;
 	float ProgressDurationSeconds = 0.0f;
 	float ProgressSnapshotWorldSeconds = 0.0f;
+	int32 ProgressSimulationStartTick = INDEX_NONE;
+	int32 ProgressSimulationEndTick = INDEX_NONE;
 
     // State tracking for efficient updates
 	bool bIsCooldownActive = false;

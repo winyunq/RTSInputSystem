@@ -128,6 +128,13 @@ public:
 	bool IsAutoCastEnabledForContext(UObject* WorldContextObject, AActor* Executor) const;
 	virtual bool IsAutoCastEnabledForContext_Implementation(UObject* WorldContextObject, AActor* Executor) const;
 
+	/** Optional availability hook for specialized command-button subclasses. */
+	UFUNCTION(BlueprintNativeEvent, BlueprintCallable, Category = "RTS Command")
+	bool IsAvailableForContext(UObject* WorldContextObject, AActor* Executor) const;
+	virtual bool IsAvailableForContext_Implementation(
+		UObject* WorldContextObject,
+		AActor* Executor) const;
+
 	/** Optional queue badge value. Zero hides the badge. */
 	UFUNCTION(BlueprintNativeEvent, BlueprintCallable, Category = "RTS Command")
 	int32 GetQueueCountForContext(UObject* WorldContextObject, AActor* Executor) const;
