@@ -60,10 +60,6 @@ void URTSCommandSubsystem::Initialize(FSubsystemCollectionBase& Collection)
 
 void URTSCommandSubsystem::Deinitialize()
 {
-	if (UWorld* World = GetWorld())
-	{
-		World->GetTimerManager().ClearTimer(QueuedLocationCommandTimer);
-	}
 	QueuedLocationCommands.Reset();
 	ActiveQueuedLocationEntities.Reset();
 	ActiveCommandTags.Reset();
@@ -430,7 +426,6 @@ void URTSCommandSubsystem::QueueLocationCommand(
 		}
 	}
 
-	EnsureQueuedLocationCommandTimer();
 }
 
 void URTSCommandSubsystem::ClearQueuedLocationCommands(const TArray<FEntityHandle>& Entities)
@@ -441,47 +436,18 @@ void URTSCommandSubsystem::ClearQueuedLocationCommands(const TArray<FEntityHandl
 		ActiveQueuedLocationEntities.Remove(Entity);
 	}
 
-	if (ActiveQueuedLocationEntities.IsEmpty())
-	{
-		if (UWorld* World = GetWorld())
-		{
-			World->GetTimerManager().ClearTimer(QueuedLocationCommandTimer);
-		}
-	}
 }
 
-void URTSCommandSubsystem::EnsureQueuedLocationCommandTimer()
+void URTSCommandSubsystem::AdvanceQueuedLocationCommands(
+	const TArray<FEntityHandle>& Entities)
 {
-	UWorld* World = GetWorld();
-	if (!World || ActiveQueuedLocationEntities.IsEmpty()
-		|| World->GetTimerManager().IsTimerActive(QueuedLocationCommandTimer))
+	for (const FEntityHandle& Entity : Entities)
 	{
-		return;
-	}
-
-	World->GetTimerManager().SetTimer(
-		QueuedLocationCommandTimer,
-		this,
-		&URTSCommandSubsystem::TickQueuedLocationCommands,
-		0.1f,
-		true);
-}
-
-void URTSCommandSubsystem::TickQueuedLocationCommands()
-{
-	const TArray<FEntityHandle> ActiveEntities = ActiveQueuedLocationEntities.Array();
-	for (const FEntityHandle& Entity : ActiveEntities)
-	{
+		ActiveQueuedLocationEntities.Remove(Entity);
 		if (!UMassAPIFuncLib::IsValid(this, Entity))
 		{
 			QueuedLocationCommands.Remove(Entity);
-			ActiveQueuedLocationEntities.Remove(Entity);
 			ActiveCommandTags.Remove(Entity);
-			continue;
-		}
-
-		if (IsEntityMoving(Entity))
-		{
 			continue;
 		}
 
@@ -489,7 +455,6 @@ void URTSCommandSubsystem::TickQueuedLocationCommands()
 		if (!Queue || Queue->IsEmpty())
 		{
 			QueuedLocationCommands.Remove(Entity);
-			ActiveQueuedLocationEntities.Remove(Entity);
 			continue;
 		}
 
@@ -510,14 +475,20 @@ void URTSCommandSubsystem::TickQueuedLocationCommands()
 			ActiveQueuedLocationEntities.Remove(Entity);
 		}
 	}
+}
 
-	if (ActiveQueuedLocationEntities.IsEmpty())
-	{
-		if (UWorld* World = GetWorld())
-		{
-			World->GetTimerManager().ClearTimer(QueuedLocationCommandTimer);
-		}
-	}
+void URTSCommandSubsystem::HandleMoveTaskResolved(
+	const TArray<FEntityHandle>& Entities)
+{
+	AdvanceQueuedLocationCommands(Entities);
+}
+
+void URTSCommandSubsystem::HandleMoveTaskTransferred(
+	const TArray<FEntityHandle>& Entities)
+{
+	// A replacement task owns these entities now. Queued orders attached to the
+	// superseded task must not leak into that unrelated movement chain.
+	ClearQueuedLocationCommands(Entities);
 }
 
 bool URTSCommandSubsystem::IssueMoveTo(const TArray<FEntityHandle>& SelectedEntities, const FVector& Location, bool bCanInterrupt)
@@ -563,7 +534,20 @@ bool URTSCommandSubsystem::IssueMoveTo(const TArray<FEntityHandle>& SelectedEnti
 				FMBMoveFailCondition(),
 				bCanInterrupt))
 		{
+			MoveTask->OnAgentSuccess.AddDynamic(
+				this,
+				&URTSCommandSubsystem::HandleMoveTaskResolved);
+			MoveTask->OnAgentFail.AddDynamic(
+				this,
+				&URTSCommandSubsystem::HandleMoveTaskResolved);
+			MoveTask->OnAgentTransfer.AddDynamic(
+				this,
+				&URTSCommandSubsystem::HandleMoveTaskTransferred);
 			MoveTask->Activate();
+			for (const FEntityHandle& Entity : Batch.Entities)
+			{
+				ActiveQueuedLocationEntities.Add(Entity);
+			}
 			bActivatedAny = true;
 		}
 	}

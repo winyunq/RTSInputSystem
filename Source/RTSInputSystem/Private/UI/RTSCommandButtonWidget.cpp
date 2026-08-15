@@ -13,9 +13,6 @@
 #include "Interfaces/RTSCommandProgressController.h"
 #include "Materials/MaterialInstanceDynamic.h"
 #include "UI/RTSCommanderGridWidget.h"
-#include "Engine/World.h"
-#include "Subsystems/MassBattleSubsystem.h"
-#include "TimerManager.h"
 
 TSharedRef<SWidget> URTSCommandButtonWidget::RebuildWidget()
 {
@@ -104,57 +101,12 @@ void URTSCommandButtonWidget::NativeConstruct()
 	}
 }
 
-void URTSCommandButtonWidget::NativeTick(
-	const FGeometry& MyGeometry,
-	const float InDeltaTime)
-{
-	Super::NativeTick(MyGeometry, InDeltaTime);
-	if (!bProgressItemMode
-		|| ProgressState != ERTSTimedCommandState::Active
-		|| !ActivityProgressBar
-		|| ProgressDurationSeconds <= 0.0f)
-	{
-		return;
-	}
-
-	if (ProgressSimulationStartTick != INDEX_NONE
-		&& ProgressSimulationEndTick > ProgressSimulationStartTick)
-	{
-		const UMassBattleSubsystem* MassBattle =
-			UMassBattleSubsystem::GetPtr(this);
-		const int32 CurrentTick = MassBattle
-			? MassBattle->GetTickCount() : ProgressSimulationStartTick;
-		const float Progress = static_cast<float>(
-			CurrentTick - ProgressSimulationStartTick)
-			/ static_cast<float>(
-				ProgressSimulationEndTick - ProgressSimulationStartTick);
-		ActivityProgressBar->SetPercent(FMath::Clamp(Progress, 0.0f, 0.999f));
-		return;
-	}
-
-	const UWorld* World = GetWorld();
-	const float PresentationElapsed = ProgressSnapshotElapsedSeconds
-		+ (World
-			? FMath::Max(0.0f, World->GetTimeSeconds() - ProgressSnapshotWorldSeconds)
-			: 0.0f);
-	ActivityProgressBar->SetPercent(FMath::Min(
-		PresentationElapsed / ProgressDurationSeconds,
-		0.999f));
-}
-
 void URTSCommandButtonWidget::Init(URTSCommandButton* InData, AActor* InContext, FKey InOverrideHotkey)
 {
 	bProgressItemMode = false;
 	bCanCancelProgressItem = false;
 	ProgressItemId = NAME_None;
 	ProgressActionTarget = nullptr;
-	ProgressQueueIndex = 0;
-	ProgressState = ERTSTimedCommandState::Active;
-	ProgressSnapshotElapsedSeconds = 0.0f;
-	ProgressDurationSeconds = 0.0f;
-	ProgressSnapshotWorldSeconds = 0.0f;
-	ProgressSimulationStartTick = INDEX_NONE;
-	ProgressSimulationEndTick = INDEX_NONE;
 	SetRenderOpacity(1.0f);
     ButtonData = InData;
     ContextActor = InContext;
@@ -202,7 +154,7 @@ void URTSCommandButtonWidget::Init(URTSCommandButton* InData, AActor* InContext,
         // Reset State
         bIsCooldownActive = false;
 		bCommandActive = false;
-		KeyboardPressFeedbackRemaining = 0.0f;
+		bKeyboardPressed = false;
         if (CooldownImage)
         {
             CooldownImage->SetVisibility(ESlateVisibility::Hidden);
@@ -246,7 +198,7 @@ void URTSCommandButtonWidget::Init(URTSCommandButton* InData, AActor* InContext,
         // Null data means empty slot
         if (MainButton) MainButton->SetToolTip(nullptr);
 		bCommandActive = false;
-		KeyboardPressFeedbackRemaining = 0.0f;
+		bKeyboardPressed = false;
 		ApplyInteractionVisualState();
         SetVisibility(ESlateVisibility::Hidden);
     }
@@ -287,7 +239,7 @@ void URTSCommandButtonWidget::InitProgressItem(
 	// Hovered/Pressed materials become its persistent Normal face and queued items
 	// look like several simultaneous active researches.
 	bCommandActive = false;
-	KeyboardPressFeedbackRemaining = 0.0f;
+	bKeyboardPressed = false;
 	bIsCooldownActive = false;
 	SetRenderOpacity(1.0f);
 	if (CooldownImage)
@@ -308,13 +260,6 @@ void URTSCommandButtonWidget::InitProgressItem(
 	ProgressActionTarget = ProgressItem.Controller
 		? ProgressItem.Controller
 		: InContext;
-	ProgressQueueIndex = ProgressItem.QueueIndex;
-	ProgressState = ProgressItem.State;
-	ProgressSnapshotElapsedSeconds = FMath::Max(0.0f, ProgressItem.ElapsedSeconds);
-	ProgressDurationSeconds = FMath::Max(0.0f, ProgressItem.DurationSeconds);
-	ProgressSnapshotWorldSeconds = GetWorld() ? GetWorld()->GetTimeSeconds() : 0.0f;
-	ProgressSimulationStartTick = ProgressItem.SimulationStartTick;
-	ProgressSimulationEndTick = ProgressItem.SimulationEndTick;
 
 	if (HotkeyText)
 	{
@@ -500,28 +445,15 @@ void URTSCommandButtonWidget::SetCommandActive(bool bActive)
 	ApplyInteractionVisualState();
 }
 
-void URTSCommandButtonWidget::PlayKeyboardPressFeedback()
+void URTSCommandButtonWidget::SetKeyboardPressed(const bool bPressed)
 {
-	KeyboardPressFeedbackRemaining = FMath::Max(0.05f, KeyboardPressFeedbackDuration);
-	ApplyInteractionVisualState();
-
-	if (UWorld* World = GetWorld())
+	if (bKeyboardPressed == bPressed)
 	{
-		FTimerHandle FeedbackTimer;
-		const TWeakObjectPtr<URTSCommandButtonWidget> WeakThis(this);
-		World->GetTimerManager().SetTimer(
-			FeedbackTimer,
-			[WeakThis]()
-			{
-				if (URTSCommandButtonWidget* Button = WeakThis.Get())
-				{
-					Button->KeyboardPressFeedbackRemaining = 0.0f;
-					Button->ApplyInteractionVisualState();
-				}
-			},
-			KeyboardPressFeedbackRemaining,
-			false);
+		return;
 	}
+
+	bKeyboardPressed = bPressed;
+	ApplyInteractionVisualState();
 }
 
 void URTSCommandButtonWidget::ApplyInteractionVisualState()
@@ -543,7 +475,7 @@ void URTSCommandButtonWidget::ApplyInteractionVisualState()
 	}
 
 	FButtonStyle VisualStyle = DefaultButtonStyle;
-	if (KeyboardPressFeedbackRemaining > 0.0f)
+	if (bKeyboardPressed)
 	{
 		VisualStyle.SetNormal(DefaultButtonStyle.Pressed);
 		VisualStyle.SetHovered(DefaultButtonStyle.Pressed);
@@ -554,7 +486,7 @@ void URTSCommandButtonWidget::ApplyInteractionVisualState()
 	}
 	MainButton->SetStyle(VisualStyle);
 
-	const FLinearColor Tint = KeyboardPressFeedbackRemaining > 0.0f
+	const FLinearColor Tint = bKeyboardPressed
 		? KeyboardPressedTint
 		: (bCommandActive ? ActiveCommandTint : FLinearColor::White);
 	MainButton->SetBackgroundColor(DefaultBackgroundColor * Tint);

@@ -27,7 +27,10 @@
 #include "Components/RTSBuildPlacementWireframeComponent.h"
 #include "Components/StaticMeshComponent.h"
 #include "Components/MassBattleAgentComponent.h"
+#include "Blueprint/GameViewportSubsystem.h"
 #include "FuncLibs/MassBattleFuncLib.h"
+#include "Framework/Application/IInputProcessor.h"
+#include "Framework/Application/SlateApplication.h"
 #include "Renderers/MassBattleFxRenderer.h"
 #include "Materials/MaterialInstanceDynamic.h"
 #include "Materials/MaterialInterface.h"
@@ -57,8 +60,50 @@ static TAutoConsoleVariable<int32> CVarRTSSelectedTaskLineFeedback(
 static TAutoConsoleVariable<int32> CVarRTSGroundCommandPulse(
 	TEXT("RTS.CommandFeedback.GroundPulse"),
 	1,
-	TEXT("Animated right-click ground pulse. 0=off, 1=use project settings."),
+	TEXT("Event-submitted right-click ground marker. 0=off, 1=use project settings."),
 	ECVF_Default);
+
+class FRTSSelectorInputProcessor final : public IInputProcessor
+{
+public:
+	explicit FRTSSelectorInputProcessor(URTSSelector* InSelector)
+		: Selector(InSelector)
+	{
+	}
+
+	virtual void Tick(
+		const float DeltaTime,
+		FSlateApplication& SlateApp,
+		TSharedRef<ICursor> Cursor) override
+	{
+		// IInputProcessor requires Tick. Intentionally no business work here:
+		// selector feedback changes only in discrete input-event callbacks.
+		(void)DeltaTime;
+		(void)SlateApp;
+		(void)Cursor;
+	}
+
+	virtual bool HandleMouseMoveEvent(
+		FSlateApplication& SlateApp,
+		const FPointerEvent& MouseEvent) override
+	{
+		(void)SlateApp;
+		(void)MouseEvent;
+		if (URTSSelector* SelectorComponent = Selector.Get())
+		{
+			SelectorComponent->HandlePointerMoved();
+		}
+		return false;
+	}
+
+	virtual const TCHAR* GetDebugName() const override
+	{
+		return TEXT("RTSSelectorPointerInput");
+	}
+
+private:
+	TWeakObjectPtr<URTSSelector> Selector;
+};
 
 namespace
 {
@@ -655,9 +700,13 @@ namespace
 		return PointerHash(Selector, 0x52545350u) | 1u;
 	}
 
-	uint32 GetMoveCommandFeedbackLineBatchId(const URTSSelector* Selector)
+	uint32 GetMoveCommandFeedbackLineBatchId(
+		const URTSSelector* Selector,
+		const uint32 Sequence)
 	{
-		return PointerHash(Selector, 0x5254534Du) | 1u;
+		return PointerHash(
+			Selector,
+			0x5254534Du ^ Sequence * 0x9E3779B9u) | 1u;
 	}
 
 	bool IsMovePathCommand(const FGameplayTag& CommandTag)
@@ -685,7 +734,7 @@ namespace
 // Sets default values for this component's properties
 URTSSelector::URTSSelector(): PlayerController(nullptr), HUD(nullptr), bIsSelecting(false)
 {
-	PrimaryComponentTick.bCanEverTick = true;
+	PrimaryComponentTick.bCanEverTick = false;
 	PrimaryComponentTick.bStartWithTickEnabled = false;
 
 	// Add defaults for input actions
@@ -709,26 +758,25 @@ URTSSelector::URTSSelector(): PlayerController(nullptr), HUD(nullptr), bIsSelect
 void URTSSelector::BeginPlay()
 {
 	Super::BeginPlay();
-	SetComponentTickEnabled(false);
 
 	const auto NetMode = this->GetNetMode();
 	if (NetMode != NM_DedicatedServer)
 	{
 		this->CollectComponentDependencyReferences();
+		this->RegisterPointerInputProcessor();
 		this->InstallStrategyMouseCursors();
 		this->EnsureSelectionFxRenderer();
 		this->BindInputMappingContext();
 		this->BindInputActions();
 		this->RegisterControlGroupHotkeys();
 		this->TryBindTopSelectButtons();
-		if (!BoundTopSelectWidget.IsValid())
+		if (UGameViewportSubsystem* ViewportSubsystem =
+			UGameViewportSubsystem::Get())
 		{
-			GetWorld()->GetTimerManager().SetTimer(
-				TopSelectBindRetryTimerHandle,
+			ViewportWidgetAddedDelegateHandle =
+				ViewportSubsystem->OnWidgetAdded.AddUObject(
 				this,
-				&URTSSelector::TryBindTopSelectButtons,
-				0.5f,
-				true);
+				&URTSSelector::HandleViewportWidgetAdded);
 		}
 		OnActorsSelected.AddDynamic(this, &URTSSelector::HandleSelectedActors);
 
@@ -744,7 +792,6 @@ void URTSSelector::BeginPlay()
 				HandleSelectedActors(Selection->GetSelectedActors());
 			}
 		}
-		RefreshFeedbackTickEnabled();
 	}
 }
 
@@ -801,10 +848,17 @@ void URTSSelector::EnsureSelectionFxRenderer()
 
 void URTSSelector::EndPlay(const EEndPlayReason::Type EndPlayReason)
 {
-	if (UWorld* World = GetWorld())
+	if (ViewportWidgetAddedDelegateHandle.IsValid())
 	{
-		World->GetTimerManager().ClearTimer(TopSelectBindRetryTimerHandle);
+		if (UGameViewportSubsystem* ViewportSubsystem =
+			UGameViewportSubsystem::Get())
+		{
+			ViewportSubsystem->OnWidgetAdded.Remove(
+				ViewportWidgetAddedDelegateHandle);
+		}
+		ViewportWidgetAddedDelegateHandle.Reset();
 	}
+	UnregisterPointerInputProcessor();
 	ClearSelectableHoverPreview(false);
 	RestoreStrategyMouseCursors();
 
@@ -825,7 +879,6 @@ void URTSSelector::EndPlay(const EEndPlayReason::Type EndPlayReason)
 	ClearMoveCommandFeedback();
 	EndHashGridSelectionPreview();
 	DestroyBuildPlacementPreviewActor();
-	SetComponentTickEnabled(false);
 	Super::EndPlay(EndPlayReason);
 }
 
@@ -918,10 +971,6 @@ void URTSSelector::TryBindTopSelectButtons()
 {
 	if (BoundTopSelectWidget.IsValid())
 	{
-		if (UWorld* World = GetWorld())
-		{
-			World->GetTimerManager().ClearTimer(TopSelectBindRetryTimerHandle);
-		}
 		return;
 	}
 
@@ -939,10 +988,6 @@ void URTSSelector::TryBindTopSelectButtons()
 	}
 
 	BoundTopSelectWidget = Widgets[0];
-	if (UWorld* World = GetWorld())
-	{
-		World->GetTimerManager().ClearTimer(TopSelectBindRetryTimerHandle);
-	}
 	BindTopSelectButton(TEXT("Button_1"), GET_FUNCTION_NAME_CHECKED(URTSSelector, SelectAllArtillery));
 	BindTopSelectButton(TEXT("Button_2"), GET_FUNCTION_NAME_CHECKED(URTSSelector, SelectAllAircraft));
 	BindTopSelectButton(TEXT("Button_3"), GET_FUNCTION_NAME_CHECKED(URTSSelector, SelectAllNaval));
@@ -959,6 +1004,19 @@ void URTSSelector::TryBindTopSelectButtons()
 	BindTopSelectButton(TEXT("Button_13"), GET_FUNCTION_NAME_CHECKED(URTSSelector, SelectAllAirports));
 	BindTopSelectButton(TEXT("Button_14"), GET_FUNCTION_NAME_CHECKED(URTSSelector, SelectAllBarracks));
 	BindTopSelectButton(TEXT("Button_15"), GET_FUNCTION_NAME_CHECKED(URTSSelector, SelectAllMilitaryCamps));
+}
+
+void URTSSelector::HandleViewportWidgetAdded(
+	UWidget* Widget,
+	ULocalPlayer* LocalPlayer)
+{
+	(void)Widget;
+	if (!PlayerController
+		|| (LocalPlayer && LocalPlayer != PlayerController->GetLocalPlayer()))
+	{
+		return;
+	}
+	TryBindTopSelectButtons();
 }
 
 void URTSSelector::UnbindTopSelectButtons()
@@ -1045,34 +1103,110 @@ void URTSSelector::SelectAllAirports() { SelectTopCategory(TEXT("RTS.Selection.S
 void URTSSelector::SelectAllBarracks() { SelectTopCategory(TEXT("RTS.Selection.Structure.Barracks")); }
 void URTSSelector::SelectAllMilitaryCamps() { SelectTopCategory(TEXT("RTS.Selection.Structure.MilitaryCamp")); }
 
-// Ticks for cursor hover preview and while transient world feedback is active.
-void URTSSelector::TickComponent(float DeltaTime, ELevelTick TickType, FActorComponentTickFunction* ThisTickFunction)
+void URTSSelector::RegisterPointerInputProcessor()
 {
-	Super::TickComponent(DeltaTime, TickType, ThisTickFunction);
+	if (PointerInputProcessor.IsValid()
+		|| !FSlateApplication::IsInitialized())
+	{
+		return;
+	}
+	PointerInputProcessor =
+		MakeShared<FRTSSelectorInputProcessor>(this);
+	FSlateApplication::Get().RegisterInputPreProcessor(
+		PointerInputProcessor);
+}
 
-	UpdateSelectableHoverPreview();
+void URTSSelector::UnregisterPointerInputProcessor()
+{
+	if (PointerInputProcessor.IsValid()
+		&& FSlateApplication::IsInitialized())
+	{
+		FSlateApplication::Get().UnregisterInputPreProcessor(
+			PointerInputProcessor);
+	}
+	PointerInputProcessor.Reset();
+}
 
-	if (bIsTargeting && bIsHashGridSelecting)
+void URTSSelector::HandlePointerMoved()
+{
+	if (!PlayerController)
+	{
+		return;
+	}
+
+	FVector2D MousePosition = FVector2D::ZeroVector;
+	if (!PlayerController->GetMousePosition(
+		MousePosition.X,
+		MousePosition.Y))
+	{
+		bHasProcessedPointerPixel = false;
+		ClearSelectableHoverPreview(true);
+		return;
+	}
+
+	const FIntPoint PointerPixel(
+		FMath::RoundToInt(MousePosition.X),
+		FMath::RoundToInt(MousePosition.Y));
+	if (bHasProcessedPointerPixel
+		&& PointerPixel == LastProcessedPointerPixel)
+	{
+		return;
+	}
+	bHasProcessedPointerPixel = true;
+	LastProcessedPointerPixel = PointerPixel;
+
+	AActor* CameraActors[] =
+	{
+		PlayerController->GetViewTarget(),
+		PlayerController->GetPawn()
+	};
+	AActor* LastCameraActor = nullptr;
+	for (AActor* CameraActor : CameraActors)
+	{
+		if (!CameraActor || CameraActor == LastCameraActor)
+		{
+			continue;
+		}
+		LastCameraActor = CameraActor;
+		if (URTSCamera* Camera =
+			CameraActor->FindComponentByClass<URTSCamera>())
+		{
+			Camera->HandlePointerMoved(MousePosition);
+		}
+	}
+
+	RefreshPointerWorldState(MousePosition);
+}
+
+void URTSSelector::RefreshPointerWorldState(
+	const FVector2D& ScreenPosition)
+{
+	if (bIsSelecting)
+	{
+		UpdateSelectionAtScreenPosition(ScreenPosition);
+	}
+	else if (bIsTargeting && bIsHashGridSelecting)
 	{
 		UpdateHashGridSelectionPreview();
 	}
-
-	UpdateMoveCommandFeedback(DeltaTime);
-	RefreshFeedbackTickEnabled();
+	else if (!bIsTargeting)
+	{
+		UpdateSelectableHoverPreview(ScreenPosition);
+	}
 }
 
-void URTSSelector::RefreshFeedbackTickEnabled()
+void URTSSelector::UpdateSelectionAtScreenPosition(
+	const FVector2D& ScreenPosition)
 {
-	const URTSInputPanelSettings* Settings = GetDefault<URTSInputPanelSettings>();
-	const bool bNeedsHoverTick = Settings
-		&& (Settings->bEnableSelectableHoverPreview
-			|| Settings->bEnableStrategyMouseCursor);
-	const bool bNeedsTick =
-		bNeedsHoverTick
-		||
-		(bIsTargeting && bIsHashGridSelecting)
-		|| !MoveCommandFeedbackPulses.IsEmpty();
-	SetComponentTickEnabled(bNeedsTick);
+	if (bSkipCurrentSelectionClick || !bIsSelecting)
+	{
+		return;
+	}
+	SelectionEnd = ScreenPosition;
+	if (IsValid(HUD))
+	{
+		HUD->UpdateSelection(SelectionEnd);
+	}
 }
 
 void URTSSelector::CollectComponentDependencyReferences()
@@ -1103,6 +1237,7 @@ void URTSSelector::SetupPlayerInputComponent(UInputComponent* PlayerInputCompone
 	{
 		InputComponent->BindAction(this->BeginSelection, ETriggerEvent::Started, this, &URTSSelector::OnSelectionStart);
 		InputComponent->BindAction(this->BeginSelection, ETriggerEvent::Completed, this, &URTSSelector::OnSelectionEnd);
+		InputComponent->BindAction(this->BeginSelection, ETriggerEvent::Canceled, this, &URTSSelector::OnSelectionEnd);
 		if (this->IssueCommandAction)
 		{
 			InputComponent->BindAction(this->IssueCommandAction, ETriggerEvent::Started, this, &URTSSelector::OnIssueCommand);
@@ -1129,14 +1264,14 @@ void URTSSelector::BindInputActions()
 
 		EnhancedInputComponent->BindAction(
 			this->BeginSelection,
-			ETriggerEvent::Triggered,
+			ETriggerEvent::Completed,
 			this,
-			&URTSSelector::OnUpdateSelection
+			&URTSSelector::OnSelectionEnd
 		);
 
 		EnhancedInputComponent->BindAction(
 			this->BeginSelection,
-			ETriggerEvent::Completed,
+			ETriggerEvent::Canceled,
 			this,
 			&URTSSelector::OnSelectionEnd
 		);
@@ -1329,19 +1464,8 @@ void URTSSelector::InstallStrategyMouseCursors()
 		return;
 	}
 
-	ViewportClient->SetUseSoftwareCursorWidgets(true);
-	ViewportClient->SetSoftwareCursorWidget(
-		EMouseCursor::Default,
-		SNew(SRTSStrategyCursor)
-			.Style(ERTSStrategyCursorStyle::Normal));
-	ViewportClient->SetSoftwareCursorWidget(
-		EMouseCursor::GrabHand,
-		SNew(SRTSStrategyCursor)
-			.Style(ERTSStrategyCursorStyle::Selectable));
-	ViewportClient->SetSoftwareCursorWidget(
-		EMouseCursor::Crosshairs,
-		SNew(SRTSStrategyCursor)
-			.Style(ERTSStrategyCursorStyle::Targeting));
+	// Platform cursors remain responsive even when the render/game frame stalls.
+	ViewportClient->SetUseSoftwareCursorWidgets(false);
 
 	PlayerController->DefaultMouseCursor = EMouseCursor::Default;
 	PlayerController->CurrentMouseCursor = EMouseCursor::Default;
@@ -1355,6 +1479,7 @@ void URTSSelector::RestoreStrategyMouseCursors()
 	if (UGameViewportClient* ViewportClient =
 		LocalPlayer ? LocalPlayer->ViewportClient : nullptr)
 	{
+		ViewportClient->SetUseSoftwareCursorWidgets(false);
 		ViewportClient->SetSoftwareCursorWidget(
 			EMouseCursor::Default,
 			TSharedPtr<SWidget>());
@@ -1398,7 +1523,8 @@ void URTSSelector::ClearSelectableHoverPreview(
 	}
 }
 
-void URTSSelector::UpdateSelectableHoverPreview()
+void URTSSelector::UpdateSelectableHoverPreview(
+	const FVector2D& ScreenPosition)
 {
 	const URTSInputPanelSettings* Settings = GetDefault<URTSInputPanelSettings>();
 	if (!Settings
@@ -1406,19 +1532,9 @@ void URTSSelector::UpdateSelectableHoverPreview()
 			&& !Settings->bEnableStrategyMouseCursor)
 		|| !PlayerController
 		|| bIsTargeting
-		|| bIsSelecting
-		|| PlayerController->IsInputKeyDown(EKeys::LeftMouseButton))
+		|| bIsSelecting)
 	{
 		ClearSelectableHoverPreview(!bIsTargeting);
-		return;
-	}
-
-	FVector2D MousePosition = FVector2D::ZeroVector;
-	if (!PlayerController->GetMousePosition(
-		MousePosition.X,
-		MousePosition.Y))
-	{
-		ClearSelectableHoverPreview(true);
 		return;
 	}
 
@@ -1428,7 +1544,7 @@ void URTSSelector::UpdateSelectableHoverPreview()
 	const bool bHasSelectable =
 		ARTSHUD::ResolveSingleSelectableAtScreenPosition(
 			PlayerController,
-			MousePosition,
+			ScreenPosition,
 			HoveredActor,
 			HoveredEntity,
 			HoveredWorldLocation);
@@ -1529,7 +1645,6 @@ void URTSSelector::CancelTargeting()
 	{
 		PlayerController->CurrentMouseCursor = EMouseCursor::Default;
 	}
-	RefreshFeedbackTickEnabled();
 }
 
 bool URTSSelector::IsCommandQueueModifierDown() const
@@ -1852,17 +1967,14 @@ bool URTSSelector::IssuePendingTargetingCommand(const FHitResult& Hit)
 
 void URTSSelector::OnUpdateSelection(const FInputActionValue& Value)
 {
+	(void)Value;
 	if (bSkipCurrentSelectionClick || !bIsSelecting || !PlayerController) return;
 	FVector2D MousePosition = SelectionEnd;
 	if (!PlayerController->GetMousePosition(MousePosition.X, MousePosition.Y))
 	{
 		return;
 	}
-	SelectionEnd = MousePosition;
-	if (IsValid(HUD))
-	{
-		HUD->UpdateSelection(SelectionEnd);
-	}
+	UpdateSelectionAtScreenPosition(MousePosition);
 }
 
 void URTSSelector::OnSelectionEnd(const FInputActionValue& Value)
@@ -1924,118 +2036,70 @@ void URTSSelector::ShowGroundCommandFeedback(
 
 	if (CVarRTSGroundCommandPulse.GetValueOnGameThread() != 0)
 	{
+		ULineBatchComponent* LineBatcher =
+			World->GetLineBatcher(UWorld::ELineBatcherType::WorldPersistent);
+		if (!LineBatcher)
+		{
+			return;
+		}
 		const int32 MaxPulses = FMath::Clamp(
 			Settings->MaxMoveCommandFeedbackPulses,
 			1,
 			32);
-		if (MoveCommandFeedbackPulses.Num() >= MaxPulses)
+		while (MoveCommandFeedbackBatchIds.Num() >= MaxPulses)
 		{
-			MoveCommandFeedbackPulses.RemoveAt(
-				0,
-				MoveCommandFeedbackPulses.Num() - MaxPulses + 1,
-				EAllowShrinking::No);
+			LineBatcher->ClearBatch(MoveCommandFeedbackBatchIds[0]);
+			MoveCommandFeedbackBatchIds.RemoveAt(
+				0, 1, EAllowShrinking::No);
 		}
 
-		FMoveCommandFeedbackPulse& Pulse =
-			MoveCommandFeedbackPulses.AddDefaulted_GetRef();
-		Pulse.WorldLocation = Location;
-		Pulse.GroundRingPoints = BuildGroundConformingRing(
+		const uint32 BatchId = GetMoveCommandFeedbackLineBatchId(
+			this,
+			++MoveCommandFeedbackSequence);
+		MoveCommandFeedbackBatchIds.Add(BatchId);
+		const TArray<FVector> GroundRingPoints = BuildGroundConformingRing(
 			Location,
 			FMath::Max(1.0f, Settings->MoveArrivalRange),
 			FMath::Clamp(Settings->MoveCommandFeedbackSegments, 12, 64));
-		Pulse.ElapsedSeconds = 0.0f;
-		Pulse.bAttackGround = bAttackGround;
-		RefreshFeedbackTickEnabled();
-	}
-
-}
-
-void URTSSelector::UpdateMoveCommandFeedback(const float DeltaTime)
-{
-	SCOPE_CYCLE_COUNTER(STAT_RTSGroundCommandPulse);
-
-	if (MoveCommandFeedbackPulses.IsEmpty())
-	{
-		return;
-	}
-
-	const URTSInputPanelSettings* Settings = GetDefault<URTSInputPanelSettings>();
-	UWorld* World = GetWorld();
-	ULineBatchComponent* LineBatcher = World
-		? World->GetLineBatcher(UWorld::ELineBatcherType::WorldPersistent)
-		: nullptr;
-	if (!Settings
-		|| !Settings->bEnableMoveCommandFeedback
-		|| CVarRTSGroundCommandPulse.GetValueOnGameThread() == 0
-		|| !LineBatcher)
-	{
-		ClearMoveCommandFeedback();
-		return;
-	}
-	const float Duration = FMath::Max(0.1f, Settings->MoveCommandFeedbackDuration);
-	const float Thickness = FMath::Clamp(
-		Settings->MoveCommandFeedbackLineThickness,
-		0.5f,
-		12.0f);
-	const int32 Segments = FMath::Clamp(
-		Settings->MoveCommandFeedbackSegments,
-		12,
-		64);
-	const uint32 BatchId = GetMoveCommandFeedbackLineBatchId(this);
-	LineBatcher->ClearBatch(BatchId);
-
-	TArray<FBatchedLine> Lines;
-	Lines.Reserve(MoveCommandFeedbackPulses.Num() * (Segments + 2));
-	for (int32 PulseIndex = MoveCommandFeedbackPulses.Num() - 1;
-		PulseIndex >= 0;
-		--PulseIndex)
-	{
-		FMoveCommandFeedbackPulse& Pulse = MoveCommandFeedbackPulses[PulseIndex];
-		Pulse.ElapsedSeconds += DeltaTime;
-		if (Pulse.ElapsedSeconds >= Duration)
-		{
-			MoveCommandFeedbackPulses.RemoveAtSwap(
-				PulseIndex,
-				1,
-				EAllowShrinking::No);
-			continue;
-		}
-
-		const float Alpha = FMath::Clamp(Pulse.ElapsedSeconds / Duration, 0.0f, 1.0f);
-		FLinearColor Color = Pulse.bAttackGround
+		FLinearColor Color = bAttackGround
 			? Settings->AttackGroundFeedbackColor
 			: Settings->MoveCommandFeedbackColor;
-		Color *= FMath::Lerp(1.0f, 0.18f, Alpha);
-		Color.A = 1.0f - Alpha;
-		const float PulseThickness =
-			Thickness * FMath::Lerp(1.8f, 0.65f, Alpha);
+		const float Duration = FMath::Max(
+			0.1f,
+			Settings->MoveCommandFeedbackDuration);
+		const float PulseThickness = FMath::Clamp(
+			Settings->MoveCommandFeedbackLineThickness,
+			0.5f,
+			12.0f);
+		TArray<FBatchedLine> Lines;
+		Lines.Reserve(GroundRingPoints.Num() + 2);
 		for (int32 SegmentIndex = 1;
-			SegmentIndex < Pulse.GroundRingPoints.Num();
+			SegmentIndex < GroundRingPoints.Num();
 			++SegmentIndex)
 		{
 			Lines.Emplace(
-				Pulse.GroundRingPoints[SegmentIndex - 1],
-				Pulse.GroundRingPoints[SegmentIndex],
+				GroundRingPoints[SegmentIndex - 1],
+				GroundRingPoints[SegmentIndex],
 				Color,
-				-1.0f,
+				Duration,
 				PulseThickness,
 				1,
 				BatchId);
 		}
 
-		if (Pulse.bAttackGround)
+		if (bAttackGround)
 		{
 			const float CrossRadius =
 				FMath::Max(1.0f, Settings->MoveArrivalRange) * 0.55f;
 			const FVector Center =
-				Pulse.WorldLocation + FVector(0.0f, 0.0f, 6.0f);
+				Location + FVector(0.0f, 0.0f, 6.0f);
 			const FVector CrossOffsetA(CrossRadius, CrossRadius, 0.0f);
 			const FVector CrossOffsetB(CrossRadius, -CrossRadius, 0.0f);
 			Lines.Emplace(
 				Center - CrossOffsetA,
 				Center + CrossOffsetA,
 				Color,
-				-1.0f,
+				Duration,
 				PulseThickness,
 				1,
 				BatchId);
@@ -2043,31 +2107,32 @@ void URTSSelector::UpdateMoveCommandFeedback(const float DeltaTime)
 				Center - CrossOffsetB,
 				Center + CrossOffsetB,
 				Color,
-				-1.0f,
+				Duration,
 				PulseThickness,
 				1,
 				BatchId);
 		}
-	}
-
-	if (!Lines.IsEmpty())
-	{
-		LineBatcher->DrawLines(Lines);
+		if (!Lines.IsEmpty())
+		{
+			LineBatcher->DrawLines(Lines);
+		}
 	}
 }
 
 void URTSSelector::ClearMoveCommandFeedback()
 {
-	MoveCommandFeedbackPulses.Reset();
 	if (UWorld* World = GetWorld())
 	{
 		if (ULineBatchComponent* LineBatcher =
 			World->GetLineBatcher(UWorld::ELineBatcherType::WorldPersistent))
 		{
-			LineBatcher->ClearBatch(GetMoveCommandFeedbackLineBatchId(this));
+			for (const uint32 BatchId : MoveCommandFeedbackBatchIds)
+			{
+				LineBatcher->ClearBatch(BatchId);
+			}
 		}
 	}
-	RefreshFeedbackTickEnabled();
+	MoveCommandFeedbackBatchIds.Reset();
 }
 
 TArray<FVector> URTSSelector::BuildGroundConformingRing(
@@ -2435,7 +2500,6 @@ void URTSSelector::CancelHashGridSelection()
 		PlayerController->CurrentMouseCursor = EMouseCursor::Default;
 	}
 
-	RefreshFeedbackTickEnabled();
 	OnHashGridSelectionCancelled.Broadcast(CancelledCommandTag);
 }
 
@@ -2701,7 +2765,6 @@ void URTSSelector::BeginHashGridSelectionInternal(
 		FMath::Max(1.0f, FootprintCells.Y)
 	);
 	ActiveHashGridCellSize = FMath::Max(1.0f, CellSize);
-	RefreshFeedbackTickEnabled();
 
 	if (PlayerController)
 	{
@@ -3323,5 +3386,4 @@ void URTSSelector::CommitHashGridSelection()
 	{
 		PlayerController->CurrentMouseCursor = EMouseCursor::Default;
 	}
-	RefreshFeedbackTickEnabled();
 }

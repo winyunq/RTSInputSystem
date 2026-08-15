@@ -30,7 +30,6 @@ protected:
 	virtual TSharedRef<SWidget> RebuildWidget() override;
 	virtual void NativeConstruct() override;
 	virtual void NativeDestruct() override;
-	virtual void NativeTick(const FGeometry& MyGeometry, float InDeltaTime) override;
 
 	UFUNCTION()
 	virtual void OnSelectionUpdated(const FRTSSelectionView& View);
@@ -68,9 +67,6 @@ protected:
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "RTS Selection|Portrait")
 	FRotator PortraitViewDirection = FRotator(8.0f, 0.0f, 0.0f);
 
-	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "RTS Selection|Portrait", meta = (ClampMin = "1.0", ClampMax = "60.0"))
-	float PortraitCaptureRate = 15.0f;
-
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "RTS Selection|Portrait", meta = (ClampMin = "1.0", ClampMax = "3.0"))
 	float PortraitFramingPadding = 1.25f;
 
@@ -101,9 +97,6 @@ protected:
 	TObjectPtr<UPointLightComponent> PortraitFillLightComponent;
 
 	FString PortraitPreviewUnitAssetPath;
-	float PortraitCaptureAccumulator = 0.0f;
-	int32 PortraitMassValidationAttempt = 0;
-	bool bPortraitLiveFrameConfirmed = false;
 
 	bool StartMassPreviewPortrait(const FRTSUnitData& Data);
 	bool EnsurePortraitCaptureResources();

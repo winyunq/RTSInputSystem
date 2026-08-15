@@ -197,33 +197,18 @@ ARTSHUD::ARTSHUD()
 	SelectionBoxThickness = 2.0f;
 	MinSelectionSizeSq = 1.0f; // 1 pixel threshold as requested
 	bIsDrawingSelectionBox = false;
-	bIsPerformingSelection = false;
 }
 
-// Implementation of the DrawHUD function. It's called every frame to draw the HUD.
+// Render-only callback. Selection state changes are driven by input events.
 void ARTSHUD::DrawHUD()
 {
 	Super::DrawHUD(); // Call the base class implementation.
 
-	// Draw the selection box if it's active AND large enough to be a box.
-	if (bIsDrawingSelectionBox)
+	if (bIsDrawingSelectionBox
+		&& FVector2D::DistSquared(SelectionStart, SelectionEnd)
+			> MinSelectionSizeSq)
 	{
-		const APlayerController* PC = GetOwningPlayerController();
-		if (!PC || !PC->IsInputKeyDown(EKeys::LeftMouseButton))
-		{
-			bIsDrawingSelectionBox = false;
-		}
-		else if (FVector2D::DistSquared(SelectionStart, SelectionEnd) > MinSelectionSizeSq)
-		{
-			DrawSelectionBox(SelectionStart, SelectionEnd);
-		}
-	}
-
-	// Perform selection actions if required.
-	if (bIsPerformingSelection)
-	{
-		PerformSelection();
-        bIsPerformingSelection = false; // CRITICAL: Reset the flag to stop continuous selection
+		DrawSelectionBox(SelectionStart, SelectionEnd);
 	}
 }
 
@@ -245,9 +230,7 @@ void ARTSHUD::UpdateSelection(const FVector2D& EndPoint)
 void ARTSHUD::EndSelection()
 {
 	bIsDrawingSelectionBox = false;
-	// AHUD's Canvas is valid only while DrawHUD is running. Defer the
-	// projection-based selection pass to the next DrawHUD invocation.
-	bIsPerformingSelection = true;
+	PerformSelection();
 }
 
 // Default implementation of DrawSelectionBox. Draws a rectangle on the HUD.
@@ -285,138 +268,15 @@ void ARTSHUD::DrawSelectionBox_Implementation(const FVector2D& StartPoint, const
 // Default implementation of PerformSelection. Selects actors within the selection box.
 void ARTSHUD::PerformSelection_Implementation()
 {
-	// 1. Prepare
-	ERTSSelectionModifier Modifier = ERTSSelectionModifier::Replace;
-    float DragDistSq = FVector2D::DistSquared(SelectionStart, SelectionEnd);
-	const bool bIsClick = DragDistSq <= MinSelectionSizeSq;
-
-	URTSSelectionSubsystem* SelectionSubsystem = nullptr;
-    URTSSelector* SelectorComponent = nullptr;
-    APlayerController* PC = GetOwningPlayerController();
-	
-    if (PC)
-	{
-        SelectorComponent = PC->FindComponentByClass<URTSSelector>();
-		if (const ULocalPlayer* LP = PC->GetLocalPlayer())
-		{
-			SelectionSubsystem = LP->GetSubsystem<URTSSelectionSubsystem>();
-		}
-
-		if (PC->IsInputKeyDown(EKeys::LeftShift) || PC->IsInputKeyDown(EKeys::RightShift))
-		{
-			Modifier = ERTSSelectionModifier::Add;
-		}
-	}
-
-    TArray<AActor*> FinalActorSelection;
-    TArray<FEntityHandle> FinalMassSelection;
-
-    // 2. SEARCH (Direct & Concurrent)
-    
-	if (bIsClick)
-	{
-		AActor* ClickedActor = nullptr;
-		FEntityHandle ClickedEntity;
-		FVector ClickedLocation = FVector::ZeroVector;
-		if (ResolveSingleSelectableAtScreenPosition(
-			PC,
-			SelectionEnd,
-			ClickedActor,
-			ClickedEntity,
-			ClickedLocation))
-		{
-			if (ClickedActor)
-			{
-				FinalActorSelection.Add(ClickedActor);
-			}
-			else if (ClickedEntity.IsSet())
-			{
-				FinalMassSelection.Add(ClickedEntity);
-			}
-		}
-	}
-	else
-	{
-		// Actor and Mass paths may both contribute only to a real marquee.
-		TArray<AActor*> RawActors;
-		GetActorsInSelectionRectangle<AActor>(
-			SelectionStart,
-			SelectionEnd,
-			RawActors,
-			false,
-			false);
-		for (AActor* Actor : RawActors)
-		{
-			if (Actor && Actor->FindComponentByClass<URTSSelectable>())
-			{
-				FinalActorSelection.AddUnique(Actor);
-			}
-		}
-		PerformMassSelection(FinalMassSelection);
-	}
-
-	// 5. Toggle Logic (Shift + Single Click = Deselect)
-	// ONLY apply toggle if this was a Click (not a Box Drag).
-	// Threshold: MinSelectionSizeSq (Synced with Visuals).
-	
-	if (Modifier == ERTSSelectionModifier::Add && SelectionSubsystem)
-	{
-		UE_LOG(LogTemp, Log, TEXT("RTSHUD: Shift Action - DragDistSq: %f (Threshold: %f)"), DragDistSq, MinSelectionSizeSq);
-		
-		if (bIsClick)
-		{
-			// Case A: Single Actor Toggle
-			if (FinalActorSelection.Num() == 1 && FinalMassSelection.Num() == 0)
-			{
-				if (SelectionSubsystem->IsActorSelected(FinalActorSelection[0]))
-				{
-					Modifier = ERTSSelectionModifier::Remove;
-					UE_LOG(LogTemp, Log, TEXT("RTSHUD: Toggling Single Actor OFF (Remove)."));
-				}
-			}
-			// Case B: Single Mass Entity Toggle
-			else if (FinalActorSelection.Num() == 0 && FinalMassSelection.Num() == 1)
-			{
-				if (SelectionSubsystem->IsEntitySelected(FinalMassSelection[0]))
-				{
-					Modifier = ERTSSelectionModifier::Remove;
-					UE_LOG(LogTemp, Log, TEXT("RTSHUD: Toggling Single Entity OFF (Remove)."));
-				}
-			}
-		}
-	}
-
-	// 6. Update Subsystem once, after modifiers have had a chance to rewrite the selection.
-	if (SelectionSubsystem)
-	{
-		SelectionSubsystem->SetSelectedUnits(FinalActorSelection, FinalMassSelection, Modifier);
-	}
-	
-	// Visual Highlighting (Actors)
-	if (SelectorComponent)
-	{
-		const TArray<AActor*>& VisualActors = SelectionSubsystem
-			? SelectionSubsystem->GetSelectedActors()
-			: FinalActorSelection;
-
-		if (VisualActors.Num() > 0)
-		{
-			UE_LOG(LogTemp, Log, TEXT("RTSHUD: Found %d Selectable Actors."), VisualActors.Num());
-			SelectorComponent->HandleSelectedActors(VisualActors);
-		}
-		else
-		{
-			// Clear Actor visuals (we either found nothing or found Mass)
-			SelectorComponent->HandleSelectedActors(TArray<AActor*>());
-			
-			if (FinalMassSelection.Num() > 0)
-			{
-				UE_LOG(LogTemp, Log, TEXT("RTSHUD: Selected %d Mass Entities."), FinalMassSelection.Num());
-			}
-		}
-	}
-
-	bIsPerformingSelection = false;
+	APlayerController* PlayerController = GetOwningPlayerController();
+	PerformScreenSelection(
+		PlayerController,
+		PlayerController
+			? PlayerController->FindComponentByClass<URTSSelector>()
+			: nullptr,
+		SelectionStart,
+		SelectionEnd,
+		MinSelectionSizeSq);
 }
 
 #include "FuncLibs/MassBattleFuncLib.h"

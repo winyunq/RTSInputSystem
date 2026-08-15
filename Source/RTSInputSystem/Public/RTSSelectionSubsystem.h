@@ -274,8 +274,8 @@ public:
 	UTexture2D* GetMassSubtypeUnitAvatar(int32 SubTypeIndex) const;
 
 private:
-	TArray<TWeakObjectPtr<AActor>> PendingCommandProgressProviders;
-	bool bCommandProgressNotificationPending = false;
+	/** Prevents synchronous event listeners from recursively rebroadcasting the same UI update. */
+	bool bCommandProgressNotificationInProgress = false;
 
 	// Raw State
 	UPROPERTY()
@@ -299,7 +299,8 @@ private:
 
 	int32 CurrentGroupIndex = 0;
 	bool bExposeAllSelectedMassForComposableCommand = false;
-	bool bCommandRefreshPending = false;
+	/** Command UI refreshes are dispatched synchronously from the state-change event. */
+	bool bCommandRefreshInProgress = false;
 
 	// Helpers
 	FRTSUnitData CreateUnitDataFromActor(AActor* Actor) const;

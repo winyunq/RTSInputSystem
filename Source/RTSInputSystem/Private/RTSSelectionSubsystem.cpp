@@ -11,7 +11,6 @@
 #include "MassEntityManager.h"
 #include "Engine/World.h"
 #include "EngineUtils.h"
-#include "TimerManager.h"
 #include "GameFramework/Actor.h"
 #include "Interfaces/RTSCommandInterface.h"
 #include "Data/RTSCommandGridAsset.h"
@@ -40,29 +39,13 @@ DEFINE_LOG_CATEGORY(LogORTSSelection);
 
 void URTSSelectionSubsystem::RequestCommandRefresh()
 {
-	if (bCommandRefreshPending)
+	if (bCommandRefreshInProgress)
 	{
 		return;
 	}
 
-	UWorld* World = GetWorld();
-	if (!World)
-	{
-		OnCommandRefreshRequested.Broadcast();
-		return;
-	}
-
-	bCommandRefreshPending = true;
-	const TWeakObjectPtr<URTSSelectionSubsystem> WeakThis(this);
-	World->GetTimerManager().SetTimerForNextTick(
-		[WeakThis]()
-		{
-			if (URTSSelectionSubsystem* Selection = WeakThis.Get())
-			{
-				Selection->bCommandRefreshPending = false;
-				Selection->OnCommandRefreshRequested.Broadcast();
-			}
-		});
+	TGuardValue<bool> DispatchGuard(bCommandRefreshInProgress, true);
+	OnCommandRefreshRequested.Broadcast();
 }
 
 void URTSSelectionSubsystem::NotifyCommandProgressChanged(
@@ -73,50 +56,15 @@ void URTSSelectionSubsystem::NotifyCommandProgressChanged(
 		return;
 	}
 
-	PendingCommandProgressProviders.AddUnique(ProgressProvider);
-	if (bCommandProgressNotificationPending)
+	if (bCommandProgressNotificationInProgress)
 	{
 		return;
 	}
 
-	UWorld* World = GetWorld();
-	if (!World)
-	{
-		TArray<TWeakObjectPtr<AActor>> ProgressProviders =
-			MoveTemp(PendingCommandProgressProviders);
-		for (const TWeakObjectPtr<AActor>& Provider : ProgressProviders)
-		{
-			if (Provider.IsValid())
-			{
-				OnCommandProgressChanged.Broadcast(Provider.Get());
-			}
-		}
-		return;
-	}
-
-	bCommandProgressNotificationPending = true;
-	const TWeakObjectPtr<URTSSelectionSubsystem> WeakThis(this);
-	World->GetTimerManager().SetTimerForNextTick(
-		[WeakThis]()
-		{
-			URTSSelectionSubsystem* Selection = WeakThis.Get();
-			if (!Selection)
-			{
-				return;
-			}
-
-			Selection->bCommandProgressNotificationPending = false;
-			TArray<TWeakObjectPtr<AActor>> ProgressProviders =
-				MoveTemp(Selection->PendingCommandProgressProviders);
-			for (const TWeakObjectPtr<AActor>& Provider : ProgressProviders)
-			{
-				if (Provider.IsValid())
-				{
-					Selection->OnCommandProgressChanged.Broadcast(
-						Provider.Get());
-				}
-			}
-		});
+	TGuardValue<bool> DispatchGuard(
+		bCommandProgressNotificationInProgress,
+		true);
+	OnCommandProgressChanged.Broadcast(ProgressProvider);
 }
 
 namespace

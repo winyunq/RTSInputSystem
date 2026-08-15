@@ -31,71 +31,6 @@ namespace
 	{
 		return Data.GroupKey.IsEmpty() ? Data.Name : Data.GroupKey;
 	}
-
-	bool GetVisiblePortraitContentBounds(
-		UTextureRenderTarget2D* RenderTarget,
-		FIntRect& OutBounds)
-	{
-		if (!RenderTarget)
-		{
-			return false;
-		}
-
-		FTextureRenderTargetResource* Resource = RenderTarget->GameThread_GetRenderTargetResource();
-		TArray<FColor> Pixels;
-		if (!Resource || !Resource->ReadPixels(Pixels) || Pixels.IsEmpty())
-		{
-			return false;
-		}
-
-		const int32 Width = RenderTarget->SizeX;
-		const int32 Height = RenderTarget->SizeY;
-		if (Width <= 0 || Height <= 0 || Pixels.Num() < Width * Height)
-		{
-			return false;
-		}
-
-		const FColor CornerColors[] = {
-			Pixels[0],
-			Pixels[Width - 1],
-			Pixels[(Height - 1) * Width],
-			Pixels[Height * Width - 1]
-		};
-		FColor BackgroundColor(0, 0, 0, 255);
-		for (const FColor& Corner : CornerColors)
-		{
-			BackgroundColor.R += Corner.R / UE_ARRAY_COUNT(CornerColors);
-			BackgroundColor.G += Corner.G / UE_ARRAY_COUNT(CornerColors);
-			BackgroundColor.B += Corner.B / UE_ARRAY_COUNT(CornerColors);
-		}
-		FIntPoint Min(Width, Height);
-		FIntPoint Max(-1, -1);
-		for (int32 Y = 0; Y < Height; Y += 2)
-		{
-			for (int32 X = 0; X < Width; X += 2)
-			{
-				const FColor& Pixel = Pixels[Y * Width + X];
-				const int32 ColorDifference =
-					FMath::Abs(static_cast<int32>(Pixel.R) - static_cast<int32>(BackgroundColor.R))
-					+ FMath::Abs(static_cast<int32>(Pixel.G) - static_cast<int32>(BackgroundColor.G))
-					+ FMath::Abs(static_cast<int32>(Pixel.B) - static_cast<int32>(BackgroundColor.B));
-				if (Pixel.A > 0 && ColorDifference > 36)
-				{
-					Min.X = FMath::Min(Min.X, X);
-					Min.Y = FMath::Min(Min.Y, Y);
-					Max.X = FMath::Max(Max.X, X);
-					Max.Y = FMath::Max(Max.Y, Y);
-				}
-			}
-		}
-
-		if (Max.X < Min.X || Max.Y < Min.Y)
-		{
-			return false;
-		}
-		OutBounds = FIntRect(Min, Max + FIntPoint(1, 1));
-		return true;
-	}
 }
 
 TSharedRef<SWidget> URTSActiveGroupWidget::RebuildWidget()
@@ -184,30 +119,6 @@ void URTSActiveGroupWidget::NativeDestruct()
 	Super::NativeDestruct();
 }
 
-void URTSActiveGroupWidget::NativeTick(
-	const FGeometry& MyGeometry,
-	float InDeltaTime)
-{
-	Super::NativeTick(MyGeometry, InDeltaTime);
-
-	const bool bHasMassPreview = IsValid(PortraitPreviewAgentComponent)
-		&& PortraitPreviewAgentComponent->IsInitialized();
-	if (!bHasMassPreview || !PortraitCaptureComponent)
-	{
-		return;
-	}
-
-	PortraitCaptureAccumulator += InDeltaTime;
-	const float CaptureInterval = 1.0f / FMath::Max(1.0f, PortraitCaptureRate);
-	if (PortraitCaptureAccumulator >= CaptureInterval)
-	{
-		PortraitCaptureAccumulator = FMath::Fmod(
-			PortraitCaptureAccumulator,
-			CaptureInterval);
-		CapturePortraitFrame();
-	}
-}
-
 bool URTSActiveGroupWidget::StartMassPreviewPortrait(const FRTSUnitData& Data)
 {
 	if (!bEnableLivePortrait
@@ -238,7 +149,6 @@ bool URTSActiveGroupWidget::StartMassPreviewPortrait(const FRTSUnitData& Data)
 		&& IsValid(PortraitPreviewAgentComponent)
 		&& PortraitPreviewAgentComponent->IsInitialized())
 	{
-		PortraitCaptureAccumulator = 0.0f;
 		CapturePortraitFrame();
 		return true;
 	}
@@ -355,9 +265,7 @@ bool URTSActiveGroupWidget::StartMassPreviewPortrait(const FRTSUnitData& Data)
 	PortraitCaptureComponent->ClearShowOnlyComponents();
 	PortraitCaptureComponent->PrimitiveRenderMode =
 		ESceneCapturePrimitiveRenderMode::PRM_RenderScenePrimitives;
-	PortraitCaptureAccumulator = 0.0f;
-	PortraitMassValidationAttempt = 0;
-	bPortraitLiveFrameConfirmed = false;
+	ApplyLivePortraitBrush();
 	CapturePortraitFrame();
 	return true;
 }
@@ -435,7 +343,6 @@ void URTSActiveGroupWidget::ApplyLivePortraitBrush()
 
 void URTSActiveGroupWidget::StopLivePortrait()
 {
-	PortraitCaptureAccumulator = 0.0f;
 	if (PortraitCaptureComponent)
 	{
 		PortraitCaptureComponent->ClearShowOnlyComponents();
@@ -474,8 +381,6 @@ void URTSActiveGroupWidget::DestroyMassPreviewPortrait()
 	PortraitKeyLightComponent = nullptr;
 	PortraitFillLightComponent = nullptr;
 	PortraitPreviewUnitAssetPath.Reset();
-	PortraitMassValidationAttempt = 0;
-	bPortraitLiveFrameConfirmed = false;
 }
 
 void URTSActiveGroupWidget::CapturePortraitFrame()
@@ -554,26 +459,6 @@ void URTSActiveGroupWidget::CapturePortraitFrame()
 		CameraLocation,
 		(FocusPoint - CameraLocation).Rotation());
 	PortraitCaptureComponent->CaptureScene();
-
-	if (bHasMassPreview && !bPortraitLiveFrameConfirmed)
-	{
-		++PortraitMassValidationAttempt;
-		const bool bShouldValidate = PortraitMassValidationAttempt == 4
-			|| PortraitMassValidationAttempt == 12;
-		FIntRect ContentBounds;
-		if (bShouldValidate
-			&& GetVisiblePortraitContentBounds(PortraitRenderTarget, ContentBounds))
-		{
-			bPortraitLiveFrameConfirmed = true;
-			ApplyLivePortraitBrush();
-		}
-		else if (PortraitMassValidationAttempt >= 12)
-		{
-			// The 2D portrait is already visible underneath this attempt. Give up the
-			// local preview instead of ever replacing it with an empty render target.
-			DestroyMassPreviewPortrait();
-		}
-	}
 }
 
 void URTSActiveGroupWidget::ApplyStaticPortrait(UTexture2D* Texture)

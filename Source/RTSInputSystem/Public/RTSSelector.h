@@ -6,7 +6,6 @@
 #include "GameplayTagContainer.h"
 #include "InputAction.h"
 #include "InputMappingContext.h"
-#include "TimerManager.h"
 #include "RTSHUD.h"
 #include "RTSSelectable.h"
 #include "RTSSelectionStructs.h"
@@ -15,8 +14,12 @@
 #include "RTSSelector.generated.h"
 
 class AActor;
+class FRTSSelectorInputProcessor;
+class IInputProcessor;
+class ULocalPlayer;
 class UStaticMesh;
 class URTSSelectable;
+class UWidget;
 
 USTRUCT(BlueprintType)
 struct RTSINPUTSYSTEM_API FRTSHashGridSelectionResult
@@ -58,6 +61,9 @@ class RTSINPUTSYSTEM_API URTSSelector : public UActorComponent
 
 public:
 	URTSSelector();
+
+	/** Re-evaluates hover or placement state after the camera moves beneath a stationary pointer. */
+	void RefreshPointerWorldState(const FVector2D& ScreenPosition);
 
 	// BlueprintAssignable allows binding in Blueprints
 	DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(FOnActorsSelected, const TArray<AActor*>&, SelectedActors);
@@ -158,9 +164,10 @@ protected:
 	virtual void BeginPlay() override;
 	virtual void EndPlay(const EEndPlayReason::Type EndPlayReason) override;
 	virtual void SetupPlayerInputComponent(UInputComponent* PlayerInputComponent);
-	virtual void TickComponent(float DeltaTime, ELevelTick TickType, FActorComponentTickFunction* ThisTickFunction) override;
 
 private:
+	friend class FRTSSelectorInputProcessor;
+
 	UPROPERTY()
 	APlayerController* PlayerController;
 
@@ -195,13 +202,6 @@ private:
 		FVector GroundNormal = FVector::UpVector;
 		bool bBuildable = false;
 	};
-	struct FMoveCommandFeedbackPulse
-	{
-		FVector WorldLocation = FVector::ZeroVector;
-		TArray<FVector> GroundRingPoints;
-		float ElapsedSeconds = 0.0f;
-		bool bAttackGround = false;
-	};
 	struct FSelectedTaskRoute
 	{
 		FVector Start = FVector::ZeroVector;
@@ -210,8 +210,9 @@ private:
 		bool bAttackMove = false;
 	};
 	TMap<FIntPoint, FBuildPlacementGuidanceSample> BuildPlacementGuidanceSampleCache;
-	TArray<FMoveCommandFeedbackPulse> MoveCommandFeedbackPulses;
+	TArray<uint32> MoveCommandFeedbackBatchIds;
 	TArray<FSelectedTaskRoute> SelectedTaskRoutes;
+	uint32 MoveCommandFeedbackSequence = 0;
 	FIntPoint LastBuildPlacementGuidanceCell = FIntPoint::ZeroValue;
 	FVector2D LastBuildPlacementGuidanceFootprintCells = FVector2D::ZeroVector;
 	float LastBuildPlacementGuidanceCellSize = 0.0f;
@@ -224,25 +225,32 @@ private:
 	FEntityHandle HoveredMassEntity;
 	bool bCursorOverSelectable = false;
 	bool bHoverVisualApplied = false;
+	bool bHasProcessedPointerPixel = false;
+	FIntPoint LastProcessedPointerPixel = FIntPoint::ZeroValue;
 	int32 LastRecalledControlGroupIndex = INDEX_NONE;
 	double LastControlGroupRecallTime = -1.0;
-	FTimerHandle TopSelectBindRetryTimerHandle;
 	FDelegateHandle CommandFeedbackDelegateHandle;
+	FDelegateHandle ViewportWidgetAddedDelegateHandle;
+	TSharedPtr<IInputProcessor> PointerInputProcessor;
 
 	void BindInputActions();
 	void BindInputMappingContext();
+	void RegisterPointerInputProcessor();
+	void UnregisterPointerInputProcessor();
+	void HandlePointerMoved();
+	void UpdateSelectionAtScreenPosition(const FVector2D& ScreenPosition);
 	void InstallStrategyMouseCursors();
 	void RestoreStrategyMouseCursors();
-	void UpdateSelectableHoverPreview();
+	void UpdateSelectableHoverPreview(const FVector2D& ScreenPosition);
 	void ClearSelectableHoverPreview(bool bRestoreDefaultCursor);
 	void EnsureSelectionFxRenderer();
-	void RefreshFeedbackTickEnabled();
 	void RegisterControlGroupHotkeys();
 	void UnregisterControlGroupHotkeys();
 	void HandleControlGroupHotkey(int32 GroupIndex);
 	void TryBindTopSelectButtons();
 	void UnbindTopSelectButtons();
 	void BindTopSelectButton(FName WidgetName, FName HandlerName);
+	void HandleViewportWidgetAdded(UWidget* Widget, ULocalPlayer* LocalPlayer);
 	void SelectTopCategory(const TCHAR* TagName);
 	void CollectComponentDependencyReferences();
 
@@ -305,7 +313,6 @@ private:
 	bool IssuePendingTargetingCommand(const FHitResult& Hit);
 	bool ResolveSmartCommandHit(FHitResult& OutHit, bool& bOutHostileUnitTarget) const;
 	void ShowGroundCommandFeedback(const FVector& Location, bool bAttackGround);
-	void UpdateMoveCommandFeedback(float DeltaTime);
 	void ClearMoveCommandFeedback();
 	TArray<FVector> BuildGroundConformingRing(
 		const FVector& Center,

@@ -24,9 +24,6 @@ class RTSINPUTSYSTEM_API URTSCommandButtonWidget : public UUserWidget
 public:
 	
 	virtual void NativeConstruct() override;
-	virtual void NativeTick(
-		const FGeometry& MyGeometry,
-		float InDeltaTime) override;
     virtual FReply NativeOnMouseButtonDown(const FGeometry& InGeometry, const FPointerEvent& InMouseEvent) override;
 
 	UFUNCTION(BlueprintCallable, Category = "RTS Command")
@@ -48,8 +45,8 @@ public:
 	/** Applies the persistent highlight for the command currently owning the selection. */
 	void SetCommandActive(bool bActive);
 
-	/** Mirrors the button's pressed state when its keyboard shortcut is used. */
-	void PlayKeyboardPressFeedback();
+	/** Mirrors the physical pressed/released state of the keyboard shortcut. */
+	void SetKeyboardPressed(bool bPressed);
 
 	/** Explicit state pull used only by the owning command card. */
 	void RefreshCommandState();
@@ -106,20 +103,13 @@ protected:
 	FName ProgressItemId = NAME_None;
 	bool bProgressItemMode = false;
 	bool bCanCancelProgressItem = false;
-	int32 ProgressQueueIndex = 0;
-	ERTSTimedCommandState ProgressState = ERTSTimedCommandState::Active;
-	float ProgressSnapshotElapsedSeconds = 0.0f;
-	float ProgressDurationSeconds = 0.0f;
-	float ProgressSnapshotWorldSeconds = 0.0f;
-	int32 ProgressSimulationStartTick = INDEX_NONE;
-	int32 ProgressSimulationEndTick = INDEX_NONE;
 
     // State tracking for efficient updates
 	bool bIsCooldownActive = false;
 	bool bCommandActive = false;
+	bool bKeyboardPressed = false;
 	bool bHasDefaultBackgroundColor = false;
 	bool bHasDefaultButtonStyle = false;
-	float KeyboardPressFeedbackRemaining = 0.0f;
 	FLinearColor DefaultBackgroundColor = FLinearColor::White;
 	FButtonStyle DefaultButtonStyle;
 
@@ -128,9 +118,6 @@ protected:
 
 	UPROPERTY(EditAnywhere, Category = "RTS Command|Feedback")
 	FLinearColor KeyboardPressedTint = FLinearColor(1.0f, 0.78f, 0.18f, 1.0f);
-
-	UPROPERTY(EditAnywhere, Category = "RTS Command|Feedback", meta = (ClampMin = "0.05", ClampMax = "0.5"))
-	float KeyboardPressFeedbackDuration = 0.14f;
 
     // The context actor (to query state)
     UPROPERTY()

@@ -69,7 +69,6 @@ private:
 	void PerformMassSelection(TArray<struct FEntityHandle>& OutEntities);
 
 	bool bIsDrawingSelectionBox;
-	bool bIsPerformingSelection;
 	FVector2D SelectionStart;
 	FVector2D SelectionEnd;
 };

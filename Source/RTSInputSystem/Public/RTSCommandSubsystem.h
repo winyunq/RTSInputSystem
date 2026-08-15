@@ -6,7 +6,6 @@
 #include "Subsystems/LocalPlayerSubsystem.h"
 #include "GameplayTagContainer.h"
 #include "MassAPIStructs.h"
-#include "TimerManager.h"
 #include "RTSCommandSubsystem.generated.h"
 
 class URTSCommandGridAsset;
@@ -66,7 +65,6 @@ private:
 	TMap<FEntityHandle, FGameplayTag> ActiveCommandTags;
 	TMap<FEntityHandle, TArray<FQueuedLocationCommand>> QueuedLocationCommands;
 	TSet<FEntityHandle> ActiveQueuedLocationEntities;
-	FTimerHandle QueuedLocationCommandTimer;
 
 	TArray<FEntityHandle> GetSelectedMassEntities() const;
 	TArray<FEntityHandle> FilterEntitiesForCommand(
@@ -89,8 +87,14 @@ private:
 		const FVector& Location,
 		bool bCanInterrupt);
 	void ClearQueuedLocationCommands(const TArray<FEntityHandle>& Entities);
-	void EnsureQueuedLocationCommandTimer();
-	void TickQueuedLocationCommands();
+	void AdvanceQueuedLocationCommands(const TArray<FEntityHandle>& Entities);
+
+	UFUNCTION()
+	void HandleMoveTaskResolved(const TArray<FEntityHandle>& Entities);
+
+	UFUNCTION()
+	void HandleMoveTaskTransferred(const TArray<FEntityHandle>& Entities);
+
 	bool IsEntityMoving(const FEntityHandle& Entity) const;
 	bool IssueMoveTo(const TArray<FEntityHandle>& SelectedEntities, const FVector& Location, bool bCanInterrupt);
 	bool IssueAttackTarget(const TArray<FEntityHandle>& SelectedEntities, AActor* TargetActor);

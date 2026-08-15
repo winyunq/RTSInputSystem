@@ -6,32 +6,14 @@
 #include "InputMappingContext.h"
 #include "Camera/CameraComponent.h"
 #include "Components/ActorComponent.h"
+#include "Components/SceneComponent.h"
 #include "GameFramework/SpringArmComponent.h"
 #include "RTSCamera.generated.h"
 
+class FViewport;
+
 /** @brief 视野框数据更新时的多播委托声明 */
 DECLARE_MULTICAST_DELEGATE(FOnMinimapFrustumUpdated);
-
-/**
- * @brief       封装相机平移请求的指令结构
- **/
-USTRUCT()
-struct FMoveCameraCommand
-{
-	GENERATED_BODY()
-	
-	/// 目标位置在 X 轴上的分量增量
-	UPROPERTY()
-	float xAxisValue = 0;
-	
-	/// 目标位置在 Y 轴上的分量增量
-	UPROPERTY()
-	float yAxisValue = 0;
-	
-	/// 本次移动指令的缩放权重比例
-	UPROPERTY()
-	float movementScale = 0;
-};
 
 /**
  * @brief       RTS 相机组件，处理视口平移、边缘滚动、意图缩放及视野投影逻辑。
@@ -48,26 +30,6 @@ public:
 	 * @brief       初始化相机组件的默认属性与子对象引用
 	 **/
 	URTSCamera();
-
-	/**
-	 * @brief       主逻辑更新函数。驱动物理插值、地形校正及边界约束。
-	 * 
-	 * @param       参数名称: deltaTime                     数据类型:        float
-	 * @param       参数名称: tickType                      数据类型:        ELevelTick
-	 * @param       参数名称: thisTickFunction              数据类型:        FActorComponentTickFunction*
-	 **/
-	/**
-	 * @brief       每帧更新相机状态。驱动物理插值、地形校正及边界约束。
-	 * 
-	 * @param       参数名称: DeltaTime                     数据类型:        float
-	 * @param       参数名称: TickType                      数据类型:        ELevelTick
-	 * @param       参数名称: ThisTickFunction              数据类型:        FActorComponentTickFunction*
-	 **/
-	virtual void TickComponent(
-		float DeltaTime,
-		ELevelTick TickType,
-		FActorComponentTickFunction* ThisTickFunction
-	) override;
 
 	/**
 	 * @brief       使相机视野物理锁定并跟随指定的目标 Actor
@@ -96,6 +58,13 @@ public:
 	 **/
 	UFUNCTION(BlueprintCallable, Category = "RTSCamera")
 	void jumpTo(FVector position);
+
+	/**
+	 * @brief       由视口的 Slate 鼠标移动事件转发，驱动拖拽并启停按需边缘滚动。
+	 *
+	 * @param       ViewportPosition 当前鼠标在视口像素坐标系中的位置。
+	 **/
+	void HandlePointerMoved(const FVector2D& ViewportPosition);
 
 	/**
 	 * @brief       获取当前相机实际使用的移动边界。该数据来自关卡级 MapRegion ini，
@@ -246,6 +215,11 @@ protected:
 	 * @brief       生命周期起始点：建立组件依赖与输入绑定
 	 **/
 	virtual void BeginPlay() override;
+	virtual void EndPlay(const EEndPlayReason::Type EndPlayReason) override;
+	virtual void TickComponent(
+		float DeltaTime,
+		ELevelTick TickType,
+		FActorComponentTickFunction* ThisTickFunction) override;
 
 	/**
 	 * @brief       响应增强输入事件。执行缩放并标记視野更新。
@@ -294,21 +268,17 @@ protected:
 	 * 
 	 * @param       参数名称: value                         数据类型:        const FInputActionValue&
 	 **/
-	void onDragCameraActionTriggered(const FInputActionValue& value);
+	void onDragCameraActionStarted(const FInputActionValue& value);
+	void onDragCameraActionCompleted(const FInputActionValue& value);
 
 	/**
-	 * @brief       将坐标移动意图转化为战术指令并加入执行队列
+	 * @brief       将坐标移动意图立即转化为相机位移
 	 * 
 	 * @param       xAxisValue                      数据类型:        float
 	 * @param       yAxisValue                      数据类型:        float
 	 * @param       movementScale                   数据类型:        float
 	 **/
 	void requestCameraMovement(float xAxisValue, float yAxisValue, float movementScale);
-
-	/**
-	 * @brief       在一个逻辑帧内，分步执行指令队列中积压的所有平移指令
-	 **/
-	void applyAccumulatedMovementCommands();
 
 	/// 组件所属的 Actor 引用，定义了相机的生命周期主体
 	UPROPERTY()
@@ -349,14 +319,18 @@ private:
 	void registerInputMappingContext();
 	void bindActionCallbacks();
 
-	void executeEdgeScrollingEvaluation();
-	void performEdgeScrollLeft();
-	void performEdgeScrollRight();
-	void performEdgeScrollUp();
-	void performEdgeScrollDown();
+	bool executeEdgeScrollingEvaluation(const FVector2D& ViewportPosition);
+	void refreshPointerWorldState(const FVector2D& ViewportPosition);
 
-	void updateFollowPositionIfTargetActive();
-	void handleTargetArmLengthInterpolation();
+	void handleFollowTargetTransformUpdated(
+		USceneComponent* UpdatedComponent,
+		EUpdateTransformFlags UpdateTransformFlags,
+		ETeleportType Teleport);
+	void handleViewportResized(FViewport* Viewport, uint32 Unused);
+	void recalculateBoundaryReachFactors(const FVector2D& ViewportSize);
+	void applyCameraStateChange();
+	bool getViewportSizePixels(FVector2D& OutViewportSize) const;
+	float getClampedInputDeltaSeconds() const;
 	void rectifyRootHeightFromTerrain();
 	
 	/** @brief 计算当前坐标下的边界补偿并应用 */
@@ -370,16 +344,13 @@ private:
 
 	/// 相机当前正在锁定跟随的 Actor 实测对象
 	UPROPERTY()
-	AActor* activeCameraFollowTarget;
+	TWeakObjectPtr<AActor> activeCameraFollowTarget;
+	TWeakObjectPtr<USceneComponent> activeCameraFollowRootComponent;
 
 	/// 缓存边界侧移量 (SocketOffset.Y)
 	float currentLateralSocketOffset;
 	/// 缓存边界纵移量 (SocketOffset.X)
 	float currentVerticalSocketOffset;
-	/// 自上一帧以来的时间增量（秒）
-	UPROPERTY()
-	float deltaSeconds;
-
 	/** @brief 预计算的横向延伸系数 (Lateral Reach / TargetArmLength) */
 	float lateralReachFactor;
 
@@ -396,10 +367,6 @@ private:
 	/// 拖拽操作开始时的视口坐标缓存
 	UPROPERTY()
 	FVector2D dragInteractionInitialLocation;
-
-	/// 移动指令队列，用于适配变动帧率下的平滑渲染
-	UPROPERTY()
-	TArray<FMoveCameraCommand> pendingMovementCommands;
 
 	/// 当前瞬时计算的相机移动速度值
 	UPROPERTY()

@@ -8,7 +8,6 @@
 #include "Data/RTSCommandGridAsset.h"
 #include "RTSCommandButtonWidget.h"
 #include "RTSActiveGroupWidget.h" 
-#include "TimerManager.h"
 #include "RTSCommanderGridWidget.generated.h"
 
 class URTSSelector;
@@ -92,10 +91,9 @@ protected:
 	void UnregisterCommandPanelHotkeys();
 	void ExecuteCommandPanelSlot(int32 SlotIndex);
 	void HandleCommandPanelHotkeyPressed(int32 SlotIndex, const FKey& Hotkey);
+	void HandleCommandPanelHotkeyRepeated(int32 SlotIndex, const FKey& Hotkey);
 	void HandleCommandPanelHotkeyReleased(const FKey& Hotkey);
-	void BeginHeldCommandHotkeyRepeat();
-	void RepeatHeldCommandHotkey();
-	void StopHeldCommandHotkeyRepeat();
+	void ClearHeldCommandHotkeyState();
 	void ConfirmPendingTargetWithHotkey(URTSSelector* Selector, const FKey& Hotkey, bool bRapidFire = false);
 	void UpdateCommandStateVisuals();
 	void PositionSharedTooltip();
@@ -109,7 +107,6 @@ protected:
 	TWeakObjectPtr<APlayerController> CommandPanelInputOwner;
 	FKey HeldCommandHotkey;
 	int32 HeldCommandSlotIndex = INDEX_NONE;
-	FTimerHandle CommandHotkeyRepeatTimer;
 
     /** 当前正在显示的网格资产 (托管状态) */
     UPROPERTY()
