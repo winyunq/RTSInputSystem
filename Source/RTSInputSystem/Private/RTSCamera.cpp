@@ -7,6 +7,7 @@
 // 定义 RTSCamera 专用日志分类
 DEFINE_LOG_CATEGORY_STATIC(LogRTSCamera, Log, All);
 
+#include "Blueprint/WidgetLayoutLibrary.h"
 #include "Engine/GameViewportClient.h"
 #include "Engine/LocalPlayer.h"
 #include "Engine/World.h"
@@ -278,19 +279,19 @@ void URTSCamera::TickComponent(
 		this->applyCameraStateChange();
 	}
 
+	if (!this->isDragging)
+	{
+		this->executeEdgeScrollingEvaluation(
+			UWidgetLayoutLibrary::GetMousePositionOnViewport(this->GetWorld()),
+			cameraDeltaSeconds);
+	}
+
 	FVector2D pointerPosition = FVector2D::ZeroVector;
 	if (!this->realTimeStrategyPlayerController->GetMousePosition(
 		pointerPosition.X,
 		pointerPosition.Y))
 	{
 		return;
-	}
-
-	if (!this->isDragging)
-	{
-		this->executeEdgeScrollingEvaluation(
-			pointerPosition,
-			cameraDeltaSeconds);
 	}
 
 	// Units and the camera can move beneath a stationary pointer. Keep this
@@ -674,11 +675,12 @@ bool URTSCamera::executeEdgeScrollingEvaluation(
 		return false;
 	}
 
-	FVector2D viewportSize = FVector2D::ZeroVector;
-	if (!this->getViewportSizePixels(viewportSize))
-	{
-		return false;
-	}
+	// Keep pointer and extent in the same Slate-local coordinate space. Unlike
+	// APlayerController::GetMousePosition, this remains valid at and just beyond
+	// a PIE viewport edge when another system configures DoNotLock.
+	const FVector2D viewportSize =
+		UWidgetLayoutLibrary::GetViewportWidgetGeometry(this->GetWorld())
+		.GetLocalSize();
 	const float thresholdRatio = FMath::Clamp(this->distanceFromEdgeThreshold, 0.0f, 0.5f);
 	const float horizontalThreshold = viewportSize.X * thresholdRatio;
 	const float verticalThreshold = viewportSize.Y * thresholdRatio;
