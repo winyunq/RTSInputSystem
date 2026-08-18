@@ -376,6 +376,9 @@ private:
 	UPROPERTY()
 	FVector2D dragInteractionInitialLocation;
 
+	/// 鼠标事件仅写入最新拖拽位置，相机 Tick 每个画面帧消费一次。
+	FVector2D dragInteractionCurrentLocation = FVector2D::ZeroVector;
+
 	/// 当前瞬时计算的相机移动速度值
 	UPROPERTY()
 	float currentMovementSpeed;
@@ -383,6 +386,9 @@ private:
 	/// Enhanced Input 事件只更新轴意图，由相机 Tick 统一积分。
 	float pendingMoveXAxis = 0.0f;
 	float pendingMoveYAxis = 0.0f;
+
+	/// 静止光标下的世界命中查询独立限制为 24Hz，不阻塞逐画面帧的相机运动。
+	float pointerWorldRefreshAccumulator = 0.0f;
 
 public:
 	/// 静态数组，存储由视野投影计算出的地平面四个接地区顶点。

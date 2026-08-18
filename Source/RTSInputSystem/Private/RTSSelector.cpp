@@ -1161,6 +1161,7 @@ void URTSSelector::HandlePointerMoved()
 		PlayerController->GetPawn()
 	};
 	AActor* LastCameraActor = nullptr;
+	bool bForwardedToCameraFrameDriver = false;
 	for (AActor* CameraActor : CameraActors)
 	{
 		if (!CameraActor || CameraActor == LastCameraActor)
@@ -1172,10 +1173,23 @@ void URTSSelector::HandlePointerMoved()
 			CameraActor->FindComponentByClass<URTSCamera>())
 		{
 			Camera->HandlePointerMoved(MousePosition);
+			bForwardedToCameraFrameDriver =
+				bForwardedToCameraFrameDriver ||
+				CameraActor == PlayerController->GetViewTarget();
 		}
 	}
 
-	RefreshPointerWorldState(MousePosition);
+	// Drag-box visuals follow raw pointer events. Actor/Mass hover and build
+	// queries are intentionally coalesced by the camera's 24 Hz frame driver;
+	// otherwise a high-polling-rate mouse can run several heavy traces per frame.
+	if (bIsSelecting)
+	{
+		UpdateSelectionAtScreenPosition(MousePosition);
+	}
+	else if (!bForwardedToCameraFrameDriver)
+	{
+		RefreshPointerWorldState(MousePosition);
+	}
 }
 
 void URTSSelector::RefreshPointerWorldState(

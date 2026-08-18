@@ -23,7 +23,8 @@ DEFINE_LOG_CATEGORY_STATIC(LogRTSCamera, Log, All);
 namespace
 {
 	constexpr float DefaultMapRegionSizeUU = 65536.0f;
-	constexpr float MaxCameraInputDeltaSeconds = 1.0f / 30.0f;
+	constexpr float MaxCameraInputDeltaSeconds = 1.0f / 24.0f;
+	constexpr float PointerWorldRefreshInterval = 1.0f / 24.0f;
 	const TCHAR* MapRegionDirectoryName = TEXT("MapRegion");
 	const TCHAR* MapRegionFileName = TEXT("MapRegion.ini");
 	const TCHAR* MapRegionSectionName = TEXT("MapRegion");
@@ -143,11 +144,14 @@ URTSCamera::URTSCamera()
 	/// 设置组件基本生存期属性
 	PrimaryComponentTick.bCanEverTick = true;
 	PrimaryComponentTick.bStartWithTickEnabled = true;
+	PrimaryComponentTick.bTickEvenWhenPaused = true;
+	PrimaryComponentTick.TickInterval = 0.0f;
+	PrimaryComponentTick.TickGroup = TG_PrePhysics;
 	this->collisionChannel = ECC_WorldStatic;
 	this->dragExtent = 0.6f;
 	this->distanceFromEdgeThreshold = 0.1f;
-	this->enableCameraLag = false;
-	this->enableCameraRotationLag = false;
+	this->enableCameraLag = true;
+	this->enableCameraRotationLag = true;
 	this->enableDynamicCameraHeight = true;
 	this->enableEdgeScrolling = true;
 	this->findGroundTraceLength = 100000;
@@ -194,6 +198,8 @@ void URTSCamera::BeginPlay()
 	// Blueprint component templates created before the camera Tick was restored
 	// may still carry a disabled tick flag. Runtime camera motion always needs it.
 	this->PrimaryComponentTick.bCanEverTick = true;
+	this->PrimaryComponentTick.bTickEvenWhenPaused = true;
+	this->PrimaryComponentTick.TickInterval = 0.0f;
 	this->SetComponentTickEnabled(true);
 
 	const auto netMode = this->GetNetMode();
@@ -217,6 +223,7 @@ void URTSCamera::EndPlay(const EEndPlayReason::Type EndPlayReason)
 	this->SetComponentTickEnabled(false);
 	this->pendingMoveXAxis = 0.0f;
 	this->pendingMoveYAxis = 0.0f;
+	this->pointerWorldRefreshAccumulator = 0.0f;
 	this->unFollowTarget();
 	FViewport::ViewportResizedEvent.RemoveAll(this);
 
@@ -246,11 +253,46 @@ void URTSCamera::TickComponent(
 		return;
 	}
 
-	const float cameraDeltaSeconds =
-		this->getClampedInputDeltaSeconds(DeltaTime);
-	if (!this->isDragging &&
-		(!FMath::IsNearlyZero(this->pendingMoveXAxis) ||
-			!FMath::IsNearlyZero(this->pendingMoveYAxis)))
+	// Camera motion follows real rendered-frame cadence rather than simulation
+	// time dilation. A 24 Hz clamp only prevents a large catch-up jump after a stall.
+	const float cameraDeltaSeconds = this->getClampedInputDeltaSeconds(
+		static_cast<float>(FApp::GetDeltaTime()));
+	if (this->isDragging)
+	{
+		FVector2D viewportSizeExtent = FVector2D::ZeroVector;
+		if (this->getViewportSizePixels(viewportSizeExtent))
+		{
+			viewportSizeExtent *= FMath::Max(this->dragExtent, UE_SMALL_NUMBER);
+			if (viewportSizeExtent.X > UE_SMALL_NUMBER &&
+				viewportSizeExtent.Y > UE_SMALL_NUMBER)
+			{
+				FVector2D dragDelta =
+					this->dragInteractionCurrentLocation - this->dragInteractionInitialLocation;
+				dragDelta.X = FMath::Clamp(
+					dragDelta.X / viewportSizeExtent.X,
+					-1.0f,
+					1.0f);
+				dragDelta.Y = FMath::Clamp(
+					dragDelta.Y / viewportSizeExtent.Y,
+					-1.0f,
+					1.0f);
+
+				const FVector worldMovement =
+					this->rootComponent->GetRightVector() * dragDelta.X -
+					this->rootComponent->GetForwardVector() * dragDelta.Y;
+				const FVector2D horizontalMovement(
+					worldMovement.X,
+					worldMovement.Y);
+				this->requestCameraMovement(
+					horizontalMovement.X,
+					horizontalMovement.Y,
+					horizontalMovement.Size(),
+					cameraDeltaSeconds);
+			}
+		}
+	}
+	else if (!FMath::IsNearlyZero(this->pendingMoveXAxis) ||
+		!FMath::IsNearlyZero(this->pendingMoveYAxis))
 	{
 		const FVector worldMovement =
 			this->rootComponent->GetRightVector() * this->pendingMoveXAxis +
@@ -294,9 +336,16 @@ void URTSCamera::TickComponent(
 		return;
 	}
 
-	// Units and the camera can move beneath a stationary pointer. Keep this
-	// frontend-only refresh independent from simulation progress notifications.
-	this->refreshPointerWorldState(pointerPosition);
+	// Hover resolution includes Actor and Mass traces. Keep stationary-pointer
+	// correctness without executing that heavy query at 60/120/240 Hz.
+	this->pointerWorldRefreshAccumulator += cameraDeltaSeconds;
+	if (this->pointerWorldRefreshAccumulator >= PointerWorldRefreshInterval)
+	{
+		this->pointerWorldRefreshAccumulator = FMath::Fmod(
+			this->pointerWorldRefreshAccumulator,
+			PointerWorldRefreshInterval);
+		this->refreshPointerWorldState(pointerPosition);
+	}
 }
 
 void URTSCamera::followTarget(AActor* target)
@@ -421,6 +470,8 @@ void URTSCamera::onDragCameraActionStarted(const FInputActionValue&)
 		this->realTimeStrategyPlayerController->GetMousePosition(
 			this->dragInteractionInitialLocation.X,
 			this->dragInteractionInitialLocation.Y);
+	this->dragInteractionCurrentLocation =
+		this->dragInteractionInitialLocation;
 }
 
 void URTSCamera::onDragCameraActionCompleted(const FInputActionValue&)
@@ -476,8 +527,11 @@ void URTSCamera::setupInitialSpringArmState()
 	this->desiredZoomLength = this->minimumZoomLength;
 	this->springArmComponent->TargetArmLength = this->desiredZoomLength;
 	this->springArmComponent->bDoCollisionTest = false;
-	this->springArmComponent->bEnableCameraLag = false;
-	this->springArmComponent->bEnableCameraRotationLag = false;
+	this->springArmComponent->bEnableCameraLag = this->enableCameraLag;
+	this->springArmComponent->bEnableCameraRotationLag =
+		this->enableCameraRotationLag;
+	this->springArmComponent->PrimaryComponentTick.bTickEvenWhenPaused = true;
+	this->springArmComponent->AddTickPrerequisiteComponent(this);
 	this->springArmComponent->SetRelativeRotation(
 		FRotator::MakeFromEuler(
 			FVector(
@@ -635,34 +689,10 @@ void URTSCamera::HandlePointerMoved(const FVector2D& ViewportPosition)
 
 	if (this->isDragging)
 	{
+		this->dragInteractionCurrentLocation = ViewportPosition;
 		this->SetComponentTickEnabled(true);
-		FVector2D viewportSizeExtent = FVector2D::ZeroVector;
-		if (!this->getViewportSizePixels(viewportSizeExtent))
-		{
-			return;
-		}
-		viewportSizeExtent *= FMath::Max(this->dragExtent, UE_SMALL_NUMBER);
-		if (viewportSizeExtent.X <= UE_SMALL_NUMBER || viewportSizeExtent.Y <= UE_SMALL_NUMBER)
-		{
-			return;
-		}
-
-		FVector2D dragDelta = ViewportPosition - this->dragInteractionInitialLocation;
-		dragDelta.X = FMath::Clamp(dragDelta.X / viewportSizeExtent.X, -1.0f, 1.0f);
-		dragDelta.Y = FMath::Clamp(dragDelta.Y / viewportSizeExtent.Y, -1.0f, 1.0f);
-
-		const FVector worldMovement =
-			this->rootComponent->GetRightVector() * dragDelta.X -
-			this->rootComponent->GetForwardVector() * dragDelta.Y;
-		const FVector2D horizontalMovement(worldMovement.X, worldMovement.Y);
-		this->requestCameraMovement(
-			horizontalMovement.X,
-			horizontalMovement.Y,
-			horizontalMovement.Size(),
-			this->getClampedInputDeltaSeconds(FApp::GetDeltaTime()));
 		return;
 	}
-
 	this->SetComponentTickEnabled(true);
 }
 
