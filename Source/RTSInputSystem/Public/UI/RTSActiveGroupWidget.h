@@ -8,12 +8,11 @@
 #include "RTSSelectionSubsystem.h"
 #include "RTSActiveGroupWidget.generated.h"
 
-class AActor;
-class UMassBattleAgentComponent;
-class UMassBattleAgentConfigDataAsset;
-class UPointLightComponent;
+class AMassBattleAgentRenderer;
 class URTSUnitIconWidget;
 class UImage;
+class UNiagaraComponent;
+class UPointLightComponent;
 class USceneCaptureComponent2D;
 class UTextureRenderTarget2D;
 
@@ -30,6 +29,7 @@ protected:
 	virtual TSharedRef<SWidget> RebuildWidget() override;
 	virtual void NativeConstruct() override;
 	virtual void NativeDestruct() override;
+	virtual void NativeTick(const FGeometry& MyGeometry, float InDeltaTime) override;
 
 	UFUNCTION()
 	virtual void OnSelectionUpdated(const FRTSSelectionView& View);
@@ -70,25 +70,18 @@ protected:
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "RTS Selection|Portrait", meta = (ClampMin = "1.0", ClampMax = "3.0"))
 	float PortraitFramingPadding = 1.25f;
 
-	/** Remote stage used only by the standalone MassBattleFrame portrait entity. */
-	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "RTS Selection|Portrait")
-	FVector PortraitPreviewLocation = FVector(1500000.0f, 1500000.0f, -500000.0f);
-
 	UPROPERTY(Transient)
 	TObjectPtr<USceneCaptureComponent2D> PortraitCaptureComponent;
 
 	UPROPERTY(Transient)
 	TObjectPtr<UTextureRenderTarget2D> PortraitRenderTarget;
 
-	/** Real MassBattleFrame entity host used by the portrait, matching the gallery render path. */
+	/** One render-only Niagara slot copied from the selected unit's existing renderer. */
 	UPROPERTY(Transient)
 	TObjectPtr<AActor> PortraitPreviewActor;
 
 	UPROPERTY(Transient)
-	TObjectPtr<UMassBattleAgentComponent> PortraitPreviewAgentComponent;
-
-	UPROPERTY(Transient)
-	TObjectPtr<UMassBattleAgentConfigDataAsset> PortraitPreviewUnitConfig;
+	TObjectPtr<UNiagaraComponent> PortraitPreviewComponent;
 
 	UPROPERTY(Transient)
 	TObjectPtr<UPointLightComponent> PortraitKeyLightComponent;
@@ -96,12 +89,17 @@ protected:
 	UPROPERTY(Transient)
 	TObjectPtr<UPointLightComponent> PortraitFillLightComponent;
 
-	FString PortraitPreviewUnitAssetPath;
+	/** Existing selected unit supplies renderer and animation data. Never owned or mutated. */
+	FEntityHandle PortraitSourceEntity;
+	TWeakObjectPtr<AMassBattleAgentRenderer> PortraitSourceRenderer;
 
-	bool StartMassPreviewPortrait(const FRTSUnitData& Data);
+	bool StartSelectedUnitPortrait(const FRTSUnitData& Data);
 	bool EnsurePortraitCaptureResources();
+	bool EnsurePortraitPreviewComponent(AMassBattleAgentRenderer* Renderer);
+	bool UpdatePortraitPreview();
 	void ApplyLivePortraitBrush();
-	void DestroyMassPreviewPortrait();
+	void DestroyPortraitPreview();
+	void ClearPortraitSource();
 	void StopLivePortrait();
 	void CapturePortraitFrame();
 	void ApplyStaticPortrait(UTexture2D* Texture);

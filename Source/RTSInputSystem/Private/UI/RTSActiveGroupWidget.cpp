@@ -4,33 +4,35 @@
 #include "UI/RTSUnitIconWidget.h"
 #include "RTSSelectionSubsystem.h" 
 #include "Blueprint/WidgetTree.h"
-#include "Camera/PlayerCameraManager.h"
 #include "Components/Border.h"
 #include "Components/Image.h"
-#include "Components/MassBattleAgentComponent.h"
 #include "Components/PointLightComponent.h"
 #include "Components/SceneCaptureComponent2D.h"
 #include "Components/SizeBox.h"
-#include "DataAssets/MassBattleAgentConfigDataAsset.h"
 #include "Engine/TextureRenderTarget2D.h"
 #include "Engine/World.h"
+#include "Fragments/Collider.h"
+#include "Fragments/RenderBatchData.h"
 #include "Fragments/Render.h"
-#include "Fragments/Select.h"
 #include "Fragments/Transform.h"
-#include "FuncLibs/MassBattleFuncLib.h"
-#include "Kismet/GameplayStatics.h"
 #include "MassAPISubsystem.h"
 #include "GameFramework/PlayerController.h"
+#include "NiagaraComponent.h"
+#include "NiagaraDataInterfaceArrayFunctionLibrary.h"
+#include "Renderers/MassBattleAgentRenderer.h"
 #include "Styling/CoreStyle.h"
 #include "Widgets/Layout/SBorder.h"
 #include "Widgets/Layout/SBox.h"
 
 namespace
 {
+	const FVector PortraitStageLocation(0.0, 0.0, 100000.0);
+
 	FString GetActiveGroupUnitGroupKey(const FRTSUnitData& Data)
 	{
 		return Data.GroupKey.IsEmpty() ? Data.Name : Data.GroupKey;
 	}
+
 }
 
 TSharedRef<SWidget> URTSActiveGroupWidget::RebuildWidget()
@@ -119,154 +121,60 @@ void URTSActiveGroupWidget::NativeDestruct()
 	Super::NativeDestruct();
 }
 
-bool URTSActiveGroupWidget::StartMassPreviewPortrait(const FRTSUnitData& Data)
+void URTSActiveGroupWidget::NativeTick(
+	const FGeometry& MyGeometry,
+	float InDeltaTime)
 {
-	if (!bEnableLivePortrait
-		|| !AvatarImage
-		|| Data.UnitAssetPath.IsEmpty()
-		|| !EnsurePortraitCaptureResources())
-	{
-		return false;
-	}
-
-	UWorld* World = GetWorld();
-	if (!World || World->GetNetMode() != NM_Standalone)
-	{
-		// A local-only preview entity would diverge lockstep state in network play.
-		return false;
-	}
-	UMassBattleAgentConfigDataAsset* UnitConfig =
-		LoadObject<UMassBattleAgentConfigDataAsset>(
-			nullptr,
-			*Data.UnitAssetPath);
-	if (!UnitConfig)
-	{
-		return false;
-	}
-
-	if (PortraitPreviewUnitAssetPath == Data.UnitAssetPath
-		&& IsValid(PortraitPreviewActor)
-		&& IsValid(PortraitPreviewAgentComponent)
-		&& PortraitPreviewAgentComponent->IsInitialized())
+	Super::NativeTick(MyGeometry, InDeltaTime);
+	if (PortraitSourceEntity.IsSet()
+		&& PortraitPreviewComponent
+		&& PortraitCaptureComponent)
 	{
 		CapturePortraitFrame();
-		return true;
 	}
+}
 
-	DestroyMassPreviewPortrait();
-
-	FVector PreviewStageLocation = PortraitPreviewLocation;
-	if (const APlayerController* PlayerController = GetOwningPlayer())
-	{
-		if (const APlayerCameraManager* CameraManager = PlayerController->PlayerCameraManager)
-		{
-			// Keep the Mass preview inside the primary view frustum so its renderer does not
-			// cull it, but place it well beyond the terrain along the camera ray so it cannot
-			// leak into the gameplay view.
-			PreviewStageLocation = CameraManager->GetCameraLocation()
-				+ CameraManager->GetCameraRotation().Vector() * 20000.0f;
-		}
-	}
-	const FTransform PreviewTransform(FRotator::ZeroRotator, PreviewStageLocation);
-	AActor* PreviewActor = World->SpawnActorDeferred<AActor>(
-		AActor::StaticClass(),
-		PreviewTransform,
-		GetOwningPlayer(),
-		nullptr,
-		ESpawnActorCollisionHandlingMethod::AlwaysSpawn);
-	if (!PreviewActor)
+bool URTSActiveGroupWidget::StartSelectedUnitPortrait(const FRTSUnitData& Data)
+{
+	if (!bEnableLivePortrait || !AvatarImage || !EnsurePortraitCaptureResources())
 	{
 		return false;
 	}
 
-	UMassBattleAgentComponent* PreviewAgent = NewObject<UMassBattleAgentComponent>(
-		PreviewActor,
-		TEXT("RTSMassPortraitAgent"),
-		RF_Transient);
-	if (!PreviewAgent)
+	if (!Data.bIsMassEntity || !Data.EntityHandle.IsSet())
 	{
-		PreviewActor->Destroy();
-		return false;
-	}
-	PreviewAgent->InitializationMode = EAgentInitMode::Manual;
-	PreviewAgent->AgentConfigAsset = UnitConfig;
-	PreviewAgent->TeamIndex = 0;
-	PreviewAgent->LocationSyncMode = EMassAgentSyncMode::None;
-	PreviewAgent->RotationSyncMode = EMassAgentSyncMode::None;
-	PreviewAgent->ScaleSyncMode = EMassAgentSyncMode::None;
-	PreviewAgent->bDestroyEntityOnEndPlay = true;
-	PreviewActor->AddInstanceComponent(PreviewAgent);
-	PreviewActor->SetRootComponent(PreviewAgent);
-
-	UPointLightComponent* KeyLight = NewObject<UPointLightComponent>(
-		PreviewActor,
-		TEXT("RTSMassPortraitKeyLight"),
-		RF_Transient);
-	UPointLightComponent* FillLight = NewObject<UPointLightComponent>(
-		PreviewActor,
-		TEXT("RTSMassPortraitFillLight"),
-		RF_Transient);
-	if (KeyLight)
-	{
-		KeyLight->SetupAttachment(PreviewAgent);
-		KeyLight->SetIntensity(6500.0f);
-		KeyLight->SetLightColor(FLinearColor(0.86f, 0.94f, 1.0f));
-		KeyLight->SetCastShadows(true);
-		PreviewActor->AddInstanceComponent(KeyLight);
-	}
-	if (FillLight)
-	{
-		FillLight->SetupAttachment(PreviewAgent);
-		FillLight->SetIntensity(2200.0f);
-		FillLight->SetLightColor(FLinearColor(0.18f, 0.48f, 0.72f));
-		FillLight->SetCastShadows(false);
-		PreviewActor->AddInstanceComponent(FillLight);
-	}
-
-	UGameplayStatics::FinishSpawningActor(PreviewActor, PreviewTransform);
-	PreviewActor->SetActorEnableCollision(false);
-	if (!PreviewAgent->IsRegistered())
-	{
-		PreviewAgent->RegisterComponent();
-	}
-	if (!PreviewAgent->ManualInitialize())
-	{
-		PreviewActor->Destroy();
 		return false;
 	}
 
-	PortraitPreviewActor = PreviewActor;
-	PortraitPreviewAgentComponent = PreviewAgent;
-	PortraitPreviewUnitConfig = UnitConfig;
-	PortraitKeyLightComponent = KeyLight;
-	PortraitFillLightComponent = FillLight;
-	PortraitPreviewUnitAssetPath = Data.UnitAssetPath;
-
-	if (UMassAPISubsystem* MassAPI = UMassAPISubsystem::GetPtr(this))
+	UMassAPISubsystem* MassAPI = UMassAPISubsystem::GetPtr(this);
+	if (!MassAPI || !MassAPI->IsValid(Data.EntityHandle))
 	{
-		const FEntityHandle PreviewEntity = PreviewAgent->GetEntityHandle();
-		if (MassAPI->IsValid(PreviewEntity))
-		{
-			UMassBattleFuncLib::SetAgentControlMode(
-				this,
-				PreviewEntity,
-				EAgentControlMode::PlayerDriven);
-			if (FSelect* Select = MassAPI->GetFragmentPtr<FSelect>(PreviewEntity))
-			{
-				Select->bEnable = false;
-			}
-			if (FVisualize* Visualize = MassAPI->GetFragmentPtr<FVisualize>(PreviewEntity))
-			{
-				Visualize->bEnable = true;
-			}
-		}
+		return false;
 	}
 
-	PortraitCaptureComponent->ClearShowOnlyComponents();
-	PortraitCaptureComponent->PrimitiveRenderMode =
-		ESceneCapturePrimitiveRenderMode::PRM_RenderScenePrimitives;
+	const FVisualizing* Visualizing = MassAPI->GetFragmentPtr<FVisualizing>(Data.EntityHandle);
+	AMassBattleAgentRenderer* Renderer = Visualizing
+		? Cast<AMassBattleAgentRenderer>(Visualizing->RendererActor.Get())
+		: nullptr;
+	if (!Renderer
+		|| Visualizing->RenderBatchId < 0
+		|| Visualizing->InstanceId < 0
+		|| !EnsurePortraitPreviewComponent(Renderer))
+	{
+		return false;
+	}
+
+	ClearPortraitSource();
+	PortraitSourceEntity = Data.EntityHandle;
+	PortraitSourceRenderer = Renderer;
+	if (!UpdatePortraitPreview())
+	{
+		DestroyPortraitPreview();
+		return false;
+	}
+
+	PortraitCaptureComponent->CaptureScene();
 	ApplyLivePortraitBrush();
-	CapturePortraitFrame();
 	return true;
 }
 
@@ -319,6 +227,109 @@ bool URTSActiveGroupWidget::EnsurePortraitCaptureResources()
 	return true;
 }
 
+bool URTSActiveGroupWidget::EnsurePortraitPreviewComponent(
+	AMassBattleAgentRenderer* Renderer)
+{
+	if (!IsValid(Renderer)
+		|| !IsValid(Renderer->NiagaraSystemAsset)
+		|| !IsValid(Renderer->AgentMesh)
+		|| !PortraitCaptureComponent)
+	{
+		return false;
+	}
+
+	if (PortraitPreviewComponent
+		&& PortraitPreviewComponent->GetAsset() != Renderer->NiagaraSystemAsset)
+	{
+		DestroyPortraitPreview();
+	}
+
+	if (!PortraitPreviewComponent)
+	{
+		// Controllers are hidden actors. Their primitive components inherit that
+		// visibility even when a scene capture explicitly includes the component.
+		FActorSpawnParameters SpawnParameters;
+		SpawnParameters.ObjectFlags |= RF_Transient;
+		SpawnParameters.SpawnCollisionHandlingOverride =
+			ESpawnActorCollisionHandlingMethod::AlwaysSpawn;
+		PortraitPreviewActor = GetWorld()->SpawnActor<AActor>(SpawnParameters);
+		if (!PortraitPreviewActor)
+		{
+			return false;
+		}
+		PortraitPreviewActor->SetActorEnableCollision(false);
+		PortraitPreviewComponent = NewObject<UNiagaraComponent>(
+			PortraitPreviewActor,
+			NAME_None,
+			RF_Transient);
+		if (!PortraitPreviewComponent)
+		{
+			DestroyPortraitPreview();
+			return false;
+		}
+		PortraitPreviewActor->SetRootComponent(PortraitPreviewComponent);
+
+		PortraitPreviewComponent->SetAsset(Renderer->NiagaraSystemAsset);
+		PortraitPreviewComponent->SetForceSolo(true);
+		PortraitPreviewComponent->SetAllowScalability(false);
+		PortraitPreviewComponent->SetAutoDestroy(false);
+		PortraitPreviewComponent->SetCastShadow(true);
+		PortraitPreviewComponent->SetVisibleInSceneCaptureOnly(true);
+		PortraitPreviewComponent->SetSystemFixedBounds(
+			FBox(FVector(-50000.0), FVector(50000.0)));
+		PortraitPreviewComponent->SetVariableStaticMesh(
+			TEXT("AgentMesh"),
+			Renderer->AgentMesh);
+		PortraitPreviewComponent->RegisterComponentWithWorld(GetWorld());
+		PortraitPreviewComponent->Activate(true);
+	}
+	else
+	{
+		PortraitPreviewComponent->SetVariableStaticMesh(
+			TEXT("AgentMesh"),
+			Renderer->AgentMesh);
+	}
+
+	if (!PortraitKeyLightComponent)
+	{
+		PortraitKeyLightComponent = NewObject<UPointLightComponent>(
+			PortraitPreviewActor,
+			NAME_None,
+			RF_Transient);
+		if (PortraitKeyLightComponent)
+		{
+			PortraitKeyLightComponent->SetMobility(EComponentMobility::Movable);
+			PortraitKeyLightComponent->SetIntensity(6500.0f);
+			PortraitKeyLightComponent->SetLightColor(
+				FLinearColor(0.86f, 0.94f, 1.0f));
+			PortraitKeyLightComponent->SetCastShadows(true);
+			PortraitKeyLightComponent->RegisterComponentWithWorld(GetWorld());
+		}
+	}
+	if (!PortraitFillLightComponent)
+	{
+		PortraitFillLightComponent = NewObject<UPointLightComponent>(
+			PortraitPreviewActor,
+			NAME_None,
+			RF_Transient);
+		if (PortraitFillLightComponent)
+		{
+			PortraitFillLightComponent->SetMobility(EComponentMobility::Movable);
+			PortraitFillLightComponent->SetIntensity(2200.0f);
+			PortraitFillLightComponent->SetLightColor(
+				FLinearColor(0.18f, 0.48f, 0.72f));
+			PortraitFillLightComponent->SetCastShadows(false);
+			PortraitFillLightComponent->RegisterComponentWithWorld(GetWorld());
+		}
+	}
+
+	PortraitCaptureComponent->PrimitiveRenderMode =
+		ESceneCapturePrimitiveRenderMode::PRM_UseShowOnlyList;
+	PortraitCaptureComponent->ClearShowOnlyComponents();
+	PortraitCaptureComponent->ShowOnlyComponent(PortraitPreviewComponent);
+	return true;
+}
+
 void URTSActiveGroupWidget::ApplyLivePortraitBrush()
 {
 	if (!AvatarImage || !PortraitRenderTarget)
@@ -343,84 +354,283 @@ void URTSActiveGroupWidget::ApplyLivePortraitBrush()
 
 void URTSActiveGroupWidget::StopLivePortrait()
 {
+	DestroyPortraitPreview();
 	if (PortraitCaptureComponent)
 	{
-		PortraitCaptureComponent->ClearShowOnlyComponents();
 		PortraitCaptureComponent->DestroyComponent();
 		PortraitCaptureComponent = nullptr;
 	}
-	DestroyMassPreviewPortrait();
 	PortraitRenderTarget = nullptr;
 }
 
-void URTSActiveGroupWidget::DestroyMassPreviewPortrait()
+void URTSActiveGroupWidget::DestroyPortraitPreview()
 {
-	if (IsValid(PortraitPreviewAgentComponent))
+	ClearPortraitSource();
+	if (PortraitCaptureComponent)
 	{
-		if (UMassAPISubsystem* MassAPI = UMassAPISubsystem::GetPtr(this))
-		{
-			const FEntityHandle PreviewEntity =
-				PortraitPreviewAgentComponent->GetEntityHandle();
-			if (MassAPI->IsValid(PreviewEntity))
-			{
-				if (FVisualize* Visualize =
-					MassAPI->GetFragmentPtr<FVisualize>(PreviewEntity))
-				{
-					Visualize->bEnable = false;
-				}
-			}
-		}
+		PortraitCaptureComponent->ClearShowOnlyComponents();
 	}
-	if (IsValid(PortraitPreviewActor))
+	if (PortraitPreviewComponent)
+	{
+		PortraitPreviewComponent->DestroyComponent();
+		PortraitPreviewComponent = nullptr;
+	}
+	if (PortraitKeyLightComponent)
+	{
+		PortraitKeyLightComponent->DestroyComponent();
+		PortraitKeyLightComponent = nullptr;
+	}
+	if (PortraitFillLightComponent)
+	{
+		PortraitFillLightComponent->DestroyComponent();
+		PortraitFillLightComponent = nullptr;
+	}
+	if (PortraitPreviewActor)
 	{
 		PortraitPreviewActor->Destroy();
+		PortraitPreviewActor = nullptr;
 	}
-	PortraitPreviewActor = nullptr;
-	PortraitPreviewAgentComponent = nullptr;
-	PortraitPreviewUnitConfig = nullptr;
-	PortraitKeyLightComponent = nullptr;
-	PortraitFillLightComponent = nullptr;
-	PortraitPreviewUnitAssetPath.Reset();
 }
 
-void URTSActiveGroupWidget::CapturePortraitFrame()
+void URTSActiveGroupWidget::ClearPortraitSource()
 {
-	const bool bHasMassPreview = IsValid(PortraitPreviewAgentComponent)
-		&& PortraitPreviewAgentComponent->IsInitialized()
-		&& IsValid(PortraitPreviewUnitConfig);
-	if (!bHasMassPreview || !PortraitCaptureComponent)
+	PortraitSourceEntity = FEntityHandle();
+	PortraitSourceRenderer.Reset();
+}
+
+bool URTSActiveGroupWidget::UpdatePortraitPreview()
+{
+	if (!PortraitCaptureComponent
+		|| !PortraitPreviewComponent
+		|| !PortraitSourceEntity.IsSet())
 	{
-		return;
+		return false;
 	}
 
-	FVector BoundsOrigin = IsValid(PortraitPreviewActor)
-		? PortraitPreviewActor->GetActorLocation()
-		: PortraitPreviewLocation;
-	if (UMassAPISubsystem* MassAPI = UMassAPISubsystem::GetPtr(this))
+	UMassAPISubsystem* MassAPI = UMassAPISubsystem::GetPtr(this);
+	if (!MassAPI || !MassAPI->IsValid(PortraitSourceEntity))
 	{
-		const FEntityHandle PreviewEntity =
-			PortraitPreviewAgentComponent->GetEntityHandle();
-		if (MassAPI->IsValid(PreviewEntity))
-		{
-			if (const FLocating* Locating =
-				MassAPI->GetFragmentPtr<FLocating>(PreviewEntity))
-			{
-				BoundsOrigin = Locating->Location;
-			}
-		}
+		return false;
 	}
-	const float UnitScale = FMath::Max(
-		UE_KINDA_SMALL_NUMBER,
-		PortraitPreviewUnitConfig->Scaling.Scale);
-	const float ScaledRadius = FMath::Max(
-		12.0f,
-		PortraitPreviewUnitConfig->Collider.Radius * UnitScale);
-	const float CapsuleHalfHeight = FMath::Max(
-		ScaledRadius,
-		(PortraitPreviewUnitConfig->Collider.Radius
-			+ PortraitPreviewUnitConfig->Collider.Height * 0.5f)
-		* UnitScale);
-	const FVector BoundsExtent(ScaledRadius, ScaledRadius, CapsuleHalfHeight);
+
+	const FVisualizing* Visualizing =
+		MassAPI->GetFragmentPtr<FVisualizing>(PortraitSourceEntity);
+	AMassBattleAgentRenderer* Renderer = PortraitSourceRenderer.Get();
+	if (!Visualizing
+		|| !IsValid(Renderer)
+		|| Visualizing->RendererActor.Get() != Renderer
+		|| !IsValid(Renderer->AgentMesh))
+	{
+		return false;
+	}
+
+	const FAgentRenderBatchData* Batch =
+		Renderer->SpawnedRenderBatches.Find(Visualizing->RenderBatchId);
+	const int32 SourceIndex = Visualizing->InstanceId;
+	if (!Batch
+		|| !Batch->LocationArray.IsValidIndex(SourceIndex)
+		|| !Batch->OrientationArray.IsValidIndex(SourceIndex)
+		|| !Batch->ScaleArray.IsValidIndex(SourceIndex)
+		|| !Batch->DynamicParams0_Array.IsValidIndex(SourceIndex))
+	{
+		return false;
+	}
+
+	const FVector PreviewStageLocation = PortraitStageLocation;
+
+	const FLocating* Locating =
+		MassAPI->GetFragmentPtr<FLocating>(PortraitSourceEntity);
+	const FRotating* Rotating =
+		MassAPI->GetFragmentPtr<FRotating>(PortraitSourceEntity);
+	const FVector SourceParentLocation = Locating
+		? Locating->Location
+		: Batch->LocationArray[SourceIndex];
+	const FQuat SourceFacing = Rotating
+		? FQuat(Rotating->RotationQuat)
+		: FQuat::Identity;
+
+	const bool bHasRelativeTransform = Batch->bNewPredictionModel
+		&& Batch->RelLocArray.IsValidIndex(SourceIndex)
+		&& Batch->RelRotArray.IsValidIndex(SourceIndex)
+		&& Batch->RelScaleArray.IsValidIndex(SourceIndex);
+	const FVector RelativeLocation = bHasRelativeTransform
+		? FVector(Batch->RelLocArray[SourceIndex])
+		: SourceFacing.Inverse().RotateVector(
+			Batch->LocationArray[SourceIndex] - SourceParentLocation);
+	const FQuat RelativeRotation = bHasRelativeTransform
+		? FQuat(Batch->RelRotArray[SourceIndex])
+		: SourceFacing.Inverse() * FQuat(Batch->OrientationArray[SourceIndex]);
+	const FVector PreviewScale = bHasRelativeTransform
+		? FVector(Batch->RelScaleArray[SourceIndex])
+		: FVector(Batch->ScaleArray[SourceIndex]);
+	const FVector PreviewRenderLocation = PreviewStageLocation + RelativeLocation;
+	const FQuat PreviewRenderRotation = RelativeRotation.GetNormalized();
+	const FVector NiagaraLocation = bHasRelativeTransform
+		? PreviewStageLocation
+		: PreviewRenderLocation;
+	const FQuat4f NiagaraOrientation = bHasRelativeTransform
+		? FQuat4f::Identity
+		: FQuat4f(PreviewRenderRotation);
+	const FVector3f NiagaraScale = bHasRelativeTransform
+		? FVector3f(1.0f)
+		: FVector3f(PreviewScale);
+
+	PortraitPreviewComponent->SetWorldLocation(PreviewStageLocation);
+	PortraitPreviewComponent->SetSystemFixedBounds(
+		FBox(FVector(-50000.0), FVector(50000.0)));
+	PortraitPreviewComponent->SetVariableStaticMesh(
+		TEXT("AgentMesh"),
+		Renderer->AgentMesh);
+
+	UNiagaraDataInterfaceArrayFunctionLibrary::SetNiagaraArrayVector(
+		PortraitPreviewComponent,
+		FName("LocationArray"),
+		TArray<FVector>{NiagaraLocation});
+	UNiagaraDataInterfaceArrayFunctionLibrary::SetNiagaraArrayQuat(
+		PortraitPreviewComponent,
+		FName("OrientationArray"),
+		TArray<FQuat4f>{NiagaraOrientation});
+	UNiagaraDataInterfaceArrayFunctionLibrary::SetNiagaraArrayVector(
+		PortraitPreviewComponent,
+		FName("ScaleArray"),
+		TArray<FVector3f>{NiagaraScale});
+	UNiagaraDataInterfaceArrayFunctionLibrary::SetNiagaraArrayVector4(
+		PortraitPreviewComponent,
+		FName("DynamicParams0_Array"),
+		TArray<FVector4f>{Batch->DynamicParams0_Array[SourceIndex]});
+	UNiagaraDataInterfaceArrayFunctionLibrary::SetNiagaraArrayVector(
+		PortraitPreviewComponent,
+		FName("HealthBar_Opacity_CurrentRatio_TargetRatio_Array"),
+		TArray<FVector3f>{FVector3f::ZeroVector});
+	UNiagaraDataInterfaceArrayFunctionLibrary::SetNiagaraArrayBool(
+		PortraitPreviewComponent,
+		FName("IsHidden_Array"),
+		TArray<bool>{false});
+
+	if (Batch->bUsePositionArray)
+	{
+		UNiagaraDataInterfaceArrayFunctionLibrary::SetNiagaraArrayPosition(
+			PortraitPreviewComponent,
+			FName("PositionArray"),
+			TArray<FVector>{NiagaraLocation});
+	}
+	if (Batch->bUseMeshIndexArray)
+	{
+		const int32 RequestedLOD = Batch->CurrentLODArray.IsValidIndex(SourceIndex)
+			? Batch->CurrentLODArray[SourceIndex]
+			: 0;
+		UNiagaraDataInterfaceArrayFunctionLibrary::SetNiagaraArrayInt32(
+			PortraitPreviewComponent,
+			FName("MeshIndex_Array"),
+			TArray<int32>{Renderer->GetRenderableMeshIndex(RequestedLOD)});
+	}
+	if (Batch->bUseStyleArray)
+	{
+		const int32 Style = Batch->StyleArray.IsValidIndex(SourceIndex)
+			? Batch->StyleArray[SourceIndex]
+			: 0;
+		UNiagaraDataInterfaceArrayFunctionLibrary::SetNiagaraArrayInt32(
+			PortraitPreviewComponent,
+			FName("StyleArray"),
+			TArray<int32>{Style});
+	}
+	if (Batch->bUseVelocityArray)
+	{
+		UNiagaraDataInterfaceArrayFunctionLibrary::SetNiagaraArrayVector(
+			PortraitPreviewComponent,
+			FName("VelocityArray"),
+			TArray<FVector3f>{FVector3f::ZeroVector});
+	}
+	if (Batch->bUseAngVelArray)
+	{
+		UNiagaraDataInterfaceArrayFunctionLibrary::SetNiagaraArrayVector(
+			PortraitPreviewComponent,
+			FName("AngVelArray"),
+			TArray<FVector3f>{FVector3f::ZeroVector});
+	}
+	if (Batch->bUseInterpParamsArray)
+	{
+		UNiagaraDataInterfaceArrayFunctionLibrary::SetNiagaraArrayVector4(
+			PortraitPreviewComponent,
+			FName("InterpParamsArray"),
+			TArray<FVector4f>{FVector4f::Zero()});
+	}
+	if (Batch->bUseAnimTracksA)
+	{
+		const FVector4f Tracks = Batch->AnimTracksA.IsValidIndex(SourceIndex)
+			? Batch->AnimTracksA[SourceIndex]
+			: FVector4f::Zero();
+		UNiagaraDataInterfaceArrayFunctionLibrary::SetNiagaraArrayVector4(
+			PortraitPreviewComponent,
+			FName("AnimTracksA"),
+			TArray<FVector4f>{Tracks});
+	}
+	if (Batch->bUseAnimTracksB)
+	{
+		const FVector4f Tracks = Batch->AnimTracksB.IsValidIndex(SourceIndex)
+			? Batch->AnimTracksB[SourceIndex]
+			: FVector4f::Zero();
+		UNiagaraDataInterfaceArrayFunctionLibrary::SetNiagaraArrayVector4(
+			PortraitPreviewComponent,
+			FName("AnimTracksB"),
+			TArray<FVector4f>{Tracks});
+	}
+	if (Batch->bUseUniqueIDArray)
+	{
+		const int32 UniqueId = Batch->UniqueIDArray.IsValidIndex(SourceIndex)
+			? FMath::Max(1, Batch->UniqueIDArray[SourceIndex])
+			: 1;
+		UNiagaraDataInterfaceArrayFunctionLibrary::SetNiagaraArrayInt32(
+			PortraitPreviewComponent,
+			FName("UniqueIDArray"),
+			TArray<int32>{UniqueId});
+	}
+	if (Batch->bUseRelLocArray)
+	{
+		UNiagaraDataInterfaceArrayFunctionLibrary::SetNiagaraArrayVector(
+			PortraitPreviewComponent,
+			FName("RelLocArray"),
+			TArray<FVector3f>{FVector3f(RelativeLocation)});
+	}
+	if (Batch->bUseRelRotArray)
+	{
+		UNiagaraDataInterfaceArrayFunctionLibrary::SetNiagaraArrayQuat(
+			PortraitPreviewComponent,
+			FName("RelRotArray"),
+			TArray<FQuat4f>{FQuat4f(PreviewRenderRotation)});
+	}
+	if (Batch->bUseRelScaleArray)
+	{
+		UNiagaraDataInterfaceArrayFunctionLibrary::SetNiagaraArrayVector(
+			PortraitPreviewComponent,
+			FName("RelScaleArray"),
+			TArray<FVector3f>{FVector3f(PreviewScale)});
+	}
+
+	PortraitPreviewComponent->SetVariableBool(FName("EnableTextPop"), false);
+	PortraitPreviewComponent->SetVariableInt(
+		FName("SubType"),
+		Renderer->SubType.Index);
+	PortraitPreviewComponent->SetVariableFloat(
+		FName("User.LogicTickTime"),
+		GetWorld() ? GetWorld()->GetTimeSeconds() : 0.0f);
+
+	FBoxSphereBounds PreviewBounds = Renderer->AgentMesh->GetBounds().TransformBy(
+		FTransform(PreviewRenderRotation, PreviewRenderLocation, PreviewScale));
+	// VAT mesh bounds contain all animation frames. Frame the actual unit,
+	// using the same collider dimensions as the gallery's unit framing.
+	if (const FCollider* Collider = MassAPI->GetFragmentPtr<FCollider>(PortraitSourceEntity))
+	{
+		const FScaling* Scaling = MassAPI->GetFragmentPtr<FScaling>(PortraitSourceEntity);
+		const float UnitScale = Scaling ? Scaling->Scale : PreviewScale.GetAbsMax();
+		const float Radius = FMath::Max(0.1f, Collider->Radius * UnitScale);
+		const float HalfHeight = FMath::Max(Radius,
+			(Collider->Radius + Collider->Height * 0.5f) * UnitScale);
+		PreviewBounds = FBoxSphereBounds(PreviewStageLocation,
+			FVector(Radius, Radius, HalfHeight), HalfHeight);
+	}
+	const FVector BoundsExtent = PreviewBounds.BoxExtent.ComponentMax(FVector(0.1));
+
 	const float HalfFovRadians = FMath::DegreesToRadians(
 		FMath::Clamp(PortraitFieldOfView, 10.0f, 90.0f) * 0.5f);
 	const float HorizontalTan = FMath::Max(0.1f, FMath::Tan(HalfFovRadians));
@@ -430,12 +640,12 @@ void URTSActiveGroupWidget::CapturePortraitFrame()
 		: FMath::Clamp(PortraitPanelWidth, 96.0f, 512.0f)
 			/ FMath::Clamp(PortraitPanelHeight, 128.0f, 512.0f);
 	const float VerticalTan = HorizontalTan / FMath::Max(0.1f, CaptureAspect);
-	const float DistanceForWidth = FMath::Max(25.0f, BoundsExtent.Y) / HorizontalTan;
-	const float DistanceForHeight = FMath::Max(25.0f, BoundsExtent.Z) / VerticalTan;
+	const float DistanceForWidth = BoundsExtent.Y / HorizontalTan;
+	const float DistanceForHeight = BoundsExtent.Z / VerticalTan;
 	float Distance = FMath::Max(DistanceForWidth, DistanceForHeight)
 		* FMath::Max(1.0f, PortraitFramingPadding)
 		+ FMath::Max(0.0f, BoundsExtent.X);
-	const FVector FocusPoint = BoundsOrigin + FVector(
+	const FVector FocusPoint = PreviewBounds.Origin + FVector(
 		0.0f,
 		0.0f,
 		BoundsExtent.Z * 0.08f);
@@ -446,28 +656,39 @@ void URTSActiveGroupWidget::CapturePortraitFrame()
 	{
 		PortraitKeyLightComponent->SetAttenuationRadius(LightRadius);
 		PortraitKeyLightComponent->SetWorldLocation(
-			FocusPoint + FVector(Distance * 0.45f, -Distance * 0.35f, Distance * 0.5f));
+			FocusPoint
+			+ FVector(Distance * 0.45f, -Distance * 0.35f, Distance * 0.5f));
 	}
 	if (PortraitFillLightComponent)
 	{
 		PortraitFillLightComponent->SetAttenuationRadius(LightRadius);
 		PortraitFillLightComponent->SetWorldLocation(
-			FocusPoint + FVector(Distance * 0.2f, Distance * 0.5f, Distance * 0.15f));
+			FocusPoint
+			+ FVector(Distance * 0.2f, Distance * 0.5f, Distance * 0.15f));
 	}
 
+	PortraitCaptureComponent->MaxViewDistanceOverride =
+		FMath::Max(5000.0f, Distance * 4.0f);
 	PortraitCaptureComponent->SetWorldLocationAndRotation(
 		CameraLocation,
 		(FocusPoint - CameraLocation).Rotation());
+	return true;
+}
+
+void URTSActiveGroupWidget::CapturePortraitFrame()
+{
+	if (!UpdatePortraitPreview())
+	{
+		DestroyPortraitPreview();
+		return;
+	}
+
 	PortraitCaptureComponent->CaptureScene();
 }
 
 void URTSActiveGroupWidget::ApplyStaticPortrait(UTexture2D* Texture)
 {
-	DestroyMassPreviewPortrait();
-	if (PortraitCaptureComponent)
-	{
-		PortraitCaptureComponent->ClearShowOnlyComponents();
-	}
+	DestroyPortraitPreview();
 
 	if (AvatarImage && Texture)
 	{
@@ -523,21 +744,25 @@ void URTSActiveGroupWidget::OnSelectionUpdated(const FRTSSelectionView& View)
 		UTexture2D* AvatarTexture = ActiveData->Portrait
 			? ActiveData->Portrait
 			: ActiveData->Icon;
-		const bool bAlreadyShowingThisUnitType =
-			PortraitPreviewUnitAssetPath == ActiveData->UnitAssetPath
-			&& IsValid(PortraitPreviewAgentComponent)
-			&& PortraitPreviewAgentComponent->IsInitialized();
-		if (!bAlreadyShowingThisUnitType)
+		const bool bAlreadyShowingThisUnit = ActiveData->bIsMassEntity
+			&& ActiveData->EntityHandle.IsSet()
+			&& PortraitSourceEntity == ActiveData->EntityHandle;
+		if (bEnableLivePortrait && ActiveData->bIsMassEntity && AvatarImage)
 		{
-			ApplyStaticPortrait(AvatarTexture);
-		}
-		if (!StartMassPreviewPortrait(*ActiveData))
-		{
-			ApplyStaticPortrait(AvatarTexture);
-			if (!AvatarTexture && AvatarImage)
+			if (!bAlreadyShowingThisUnit)
 			{
+				StopLivePortrait();
 				AvatarImage->SetVisibility(ESlateVisibility::Hidden);
+				StartSelectedUnitPortrait(*ActiveData);
 			}
+			if (GroupIcon)
+			{
+				GroupIcon->SetVisibility(ESlateVisibility::Hidden);
+			}
+		}
+		else
+		{
+			ApplyStaticPortrait(AvatarTexture);
 		}
 		
 		// Ensure self is visible (hit test invisible to allow tooltips on children)

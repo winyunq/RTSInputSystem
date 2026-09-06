@@ -34,6 +34,7 @@ public class RTSInputSystem : ModuleRules
 				"MassAPI",
 				"MassBattle",
 				"MassEntity",
+				"Niagara",
 				"SlateCore",
 				"UMG"
 			}
