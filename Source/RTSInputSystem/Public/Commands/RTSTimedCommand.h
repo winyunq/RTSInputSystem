@@ -104,7 +104,8 @@ struct RTSINPUTSYSTEM_API FRTSTimedCommandMath
 		float DurationSeconds,
 		bool bCanCancel = true,
 		URTSCommandButton* CommandButton = nullptr,
-		UObject* Controller = nullptr);
+		UObject* Controller = nullptr,
+		FGuid InstanceId = FGuid());
 
 	static void Activate(FRTSTimedCommandInstance& Instance, int32 LaneIndex);
 	static void Queue(FRTSTimedCommandInstance& Instance);

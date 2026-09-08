@@ -8,10 +8,11 @@ FRTSTimedCommandInstance FRTSTimedCommandMath::Create(
 	const float DurationSeconds,
 	const bool bCanCancel,
 	URTSCommandButton* const CommandButton,
-	UObject* const Controller)
+	UObject* const Controller,
+	const FGuid InstanceId)
 {
 	FRTSTimedCommandInstance Result;
-	Result.InstanceId = FGuid::NewGuid();
+	Result.InstanceId = InstanceId.IsValid() ? InstanceId : FGuid::NewGuid();
 	Result.CommandTag = CommandTag;
 	Result.PayloadId = PayloadId;
 	Result.DurationSeconds = FMath::Max(0.0f, DurationSeconds);
