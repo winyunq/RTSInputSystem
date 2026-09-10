@@ -167,6 +167,9 @@ protected:
 
 private:
 	friend class FRTSSelectorInputProcessor;
+#if WITH_DEV_AUTOMATION_TESTS
+	friend class FWinyunqSelectionTabInputTest;
+#endif
 
 	UPROPERTY()
 	APlayerController* PlayerController;
@@ -231,12 +234,12 @@ private:
 	double LastControlGroupRecallTime = -1.0;
 	FDelegateHandle CommandFeedbackDelegateHandle;
 	FDelegateHandle ViewportWidgetAddedDelegateHandle;
-	TSharedPtr<IInputProcessor> PointerInputProcessor;
+	TSharedPtr<IInputProcessor> SelectionInputProcessor;
 
 	void BindInputActions();
 	void BindInputMappingContext();
-	void RegisterPointerInputProcessor();
-	void UnregisterPointerInputProcessor();
+	void RegisterSelectionInputProcessor();
+	void UnregisterSelectionInputProcessor();
 	void HandlePointerMoved();
 	void UpdateSelectionAtScreenPosition(const FVector2D& ScreenPosition);
 	void InstallStrategyMouseCursors();

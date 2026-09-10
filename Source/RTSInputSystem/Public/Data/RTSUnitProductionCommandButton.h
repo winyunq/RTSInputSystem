@@ -29,6 +29,8 @@ public:
 		TargetType = ERTSCommandTargetType::Instant;
 		Role = FText::FromString(TEXT("单位生产"));
 		bAllowAutoCast = true;
+		bIsResearch = true;
+		bRepeatableResearch = true;
 	}
 
 	/** Stable identifier copied into the concrete production definition. */

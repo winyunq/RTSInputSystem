@@ -31,6 +31,8 @@
 #include "FuncLibs/MassBattleFuncLib.h"
 #include "Framework/Application/IInputProcessor.h"
 #include "Framework/Application/SlateApplication.h"
+#include "Framework/Application/SlateUser.h"
+#include "Widgets/SViewport.h"
 #include "Renderers/MassBattleFxRenderer.h"
 #include "Materials/MaterialInstanceDynamic.h"
 #include "Materials/MaterialInterface.h"
@@ -96,9 +98,47 @@ public:
 		return false;
 	}
 
+	virtual bool HandleKeyDownEvent(FSlateApplication& SlateApp, const FKeyEvent& KeyEvent) override
+	{
+		if (KeyEvent.GetKey() != EKeys::Tab || KeyEvent.IsShiftDown()
+			|| KeyEvent.IsControlDown() || KeyEvent.IsAltDown() || KeyEvent.IsCommandDown())
+		{
+			return false;
+		}
+		URTSSelector* SelectorComponent = Selector.Get();
+		APlayerController* PC = SelectorComponent ? SelectorComponent->PlayerController : nullptr;
+		ULocalPlayer* LocalPlayer = PC ? PC->GetLocalPlayer() : nullptr;
+		UGameViewportClient* ViewportClient = LocalPlayer ? LocalPlayer->ViewportClient : nullptr;
+		if (!ViewportClient || ViewportClient->IgnoreInput() || PC->IsPaused())
+		{
+			return false;
+		}
+		const TSharedPtr<FSlateUser> User = LocalPlayer->GetSlateUser();
+		const TSharedPtr<SViewport> Viewport = ViewportClient->GetGameViewportWidget();
+		if (!User || User->GetUserIndex() != KeyEvent.GetUserIndex()
+			|| !Viewport || !User->IsWidgetInFocusPath(Viewport))
+		{
+			// A PIE selector must not handle keys aimed at editor windows or another local player.
+			return false;
+		}
+		const TSharedPtr<SWidget> Focused = User->GetFocusedWidget();
+		if (Focused && Focused->GetTypeAsString().Contains(TEXT("EditableText")))
+		{
+			// Chat and text fields keep their own Tab handling.
+			return false;
+		}
+		if (URTSSelectionSubsystem* Selection = LocalPlayer->GetSubsystem<URTSSelectionSubsystem>())
+		{
+			// Selection owns Tab before Slate turns it into focus navigation. A held key stays consumed.
+			if (!KeyEvent.IsRepeat()) Selection->CycleGroup();
+			return true;
+		}
+		return false;
+	}
+
 	virtual const TCHAR* GetDebugName() const override
 	{
-		return TEXT("RTSSelectorPointerInput");
+		return TEXT("RTSSelectorInput");
 	}
 
 private:
@@ -763,7 +803,7 @@ void URTSSelector::BeginPlay()
 	if (NetMode != NM_DedicatedServer)
 	{
 		this->CollectComponentDependencyReferences();
-		this->RegisterPointerInputProcessor();
+		this->RegisterSelectionInputProcessor();
 		this->InstallStrategyMouseCursors();
 		this->EnsureSelectionFxRenderer();
 		this->BindInputMappingContext();
@@ -858,7 +898,7 @@ void URTSSelector::EndPlay(const EEndPlayReason::Type EndPlayReason)
 		}
 		ViewportWidgetAddedDelegateHandle.Reset();
 	}
-	UnregisterPointerInputProcessor();
+	UnregisterSelectionInputProcessor();
 	ClearSelectableHoverPreview(false);
 	RestoreStrategyMouseCursors();
 
@@ -1103,28 +1143,28 @@ void URTSSelector::SelectAllAirports() { SelectTopCategory(TEXT("RTS.Selection.S
 void URTSSelector::SelectAllBarracks() { SelectTopCategory(TEXT("RTS.Selection.Structure.Barracks")); }
 void URTSSelector::SelectAllMilitaryCamps() { SelectTopCategory(TEXT("RTS.Selection.Structure.MilitaryCamp")); }
 
-void URTSSelector::RegisterPointerInputProcessor()
+void URTSSelector::RegisterSelectionInputProcessor()
 {
-	if (PointerInputProcessor.IsValid()
+	if (SelectionInputProcessor.IsValid()
 		|| !FSlateApplication::IsInitialized())
 	{
 		return;
 	}
-	PointerInputProcessor =
+	SelectionInputProcessor =
 		MakeShared<FRTSSelectorInputProcessor>(this);
 	FSlateApplication::Get().RegisterInputPreProcessor(
-		PointerInputProcessor);
+		SelectionInputProcessor);
 }
 
-void URTSSelector::UnregisterPointerInputProcessor()
+void URTSSelector::UnregisterSelectionInputProcessor()
 {
-	if (PointerInputProcessor.IsValid()
+	if (SelectionInputProcessor.IsValid()
 		&& FSlateApplication::IsInitialized())
 	{
 		FSlateApplication::Get().UnregisterInputPreProcessor(
-			PointerInputProcessor);
+			SelectionInputProcessor);
 	}
-	PointerInputProcessor.Reset();
+	SelectionInputProcessor.Reset();
 }
 
 void URTSSelector::HandlePointerMoved()

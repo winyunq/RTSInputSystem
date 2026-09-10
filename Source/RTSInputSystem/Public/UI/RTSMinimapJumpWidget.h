@@ -27,6 +27,13 @@ public:
 	UFUNCTION(BlueprintCallable, Category = "Minimap|Jump")
 	void InitializeJumpWidget();
 
+	/** The next map click selects a location instead of moving the camera. */
+	void SetLocationPicking(bool bEnabled) { bLocationPicking = bEnabled; }
+	void ShowLocationMarker(const FVector& Location, const FLinearColor& Color);
+
+	UPROPERTY(BlueprintAssignable, Category = "Minimap")
+	FOnMinimapWorldLocation OnLocationPicked;
+
 	/**
 	 * Confirms the selector's active targeted command when ScreenPosition is
 	 * inside this minimap. Returns true when the pointer belongs to this widget,
@@ -84,6 +91,10 @@ protected:
 
 private:
 	TWeakObjectPtr<UActorComponent> CachedJumpComponent;
+	bool bLocationPicking = false;
+	FVector MarkerLocation = FVector::ZeroVector;
+	FLinearColor MarkerColor = FLinearColor::Yellow;
+	double MarkerExpiresAt = 0.0;
 
 	/** 缓存从 MapRegion.ini 读取的地图边界 */
 	FVector MapOrigin = FVector::ZeroVector;

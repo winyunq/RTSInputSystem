@@ -44,9 +44,6 @@ protected:
 	virtual void NativeConstruct() override;
 
 	// Input Handling
-	virtual FReply NativeOnPreviewMouseButtonDown(
-		const FGeometry& InGeometry,
-		const FPointerEvent& InMouseEvent) override;
 	virtual FReply NativeOnMouseButtonDown(const FGeometry& InGeometry, const FPointerEvent& InMouseEvent) override;
 
 	// UI Bindings

@@ -12,6 +12,8 @@
 
 DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(FOnCommandButtonClicked, const FGameplayTag&, CommandTag);
 
+class URTSCommanderGridWidget;
+
 /**
  * A Single Button in the Command Grid.
  * Displays Icon, handles clicks, shows tooltip.
@@ -20,6 +22,7 @@ UCLASS()
 class RTSINPUTSYSTEM_API URTSCommandButtonWidget : public UUserWidget
 {
 	GENERATED_BODY()
+	friend class URTSCommanderGridWidget;
 
 public:
 	
@@ -30,7 +33,7 @@ public:
 	void Init(URTSCommandButton* InData, AActor* InContext = nullptr, FKey InOverrideHotkey = FKey());
 
 	/** Shows the same command button inside a production/research activity slot. */
-	void InitProgressItem(const FRTSTimedCommandInstance& ProgressItem, AActor* InContext);
+	void InitProgressItem(const FRTSTimedCommandInstance& ProgressItem, AActor* InContext, float IconSize = 144.0f);
 
 	/** Returns the underlying data asset for this button. */
     UFUNCTION(BlueprintCallable, Category = "RTS Command")
@@ -83,10 +86,6 @@ protected:
 	UPROPERTY(meta = (BindWidgetOptional))
 	TObjectPtr<class UTextBlock> QueueCountText;
 
-	/** Same button face, with progress added only while it lives in an activity slot. */
-	UPROPERTY(meta = (BindWidgetOptional))
-	TObjectPtr<class UProgressBar> ActivityProgressBar;
-
 	// The data asset backing this button
 	UPROPERTY()
 	TObjectPtr<URTSCommandButton> ButtonData;
@@ -95,14 +94,17 @@ protected:
 	TObjectPtr<UMaterialInstanceDynamic> CooldownMaterial;
 
 	UPROPERTY(Transient)
-	TObjectPtr<URTSCommandButton> TransientProgressButtonData;
-
-	UPROPERTY(Transient)
 	TObjectPtr<UObject> ProgressActionTarget;
 
 	FName ProgressItemId = NAME_None;
 	bool bProgressItemMode = false;
 	bool bCanCancelProgressItem = false;
+	bool bResearchCopy = false;
+	bool bReturnOnCancel = false;
+	FKey CommandHotkey;
+	FEntityHandle CommandOwnerEntity;
+	FEntityHandle ProgressOwnerEntity;
+	TWeakObjectPtr<AActor> ProgressOwnerActor;
 
     // State tracking for efficient updates
 	bool bIsCooldownActive = false;
@@ -129,6 +131,9 @@ protected:
 
 	UFUNCTION()
 	void HandleClicked();
+
+	UFUNCTION()
+	void HandleProgressClicked();
     
     UFUNCTION()
     void HandleHovered();

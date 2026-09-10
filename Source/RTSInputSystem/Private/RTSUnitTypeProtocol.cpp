@@ -57,21 +57,21 @@ namespace
 				: Slot.CommandTagName;
 			if (CommandName == FName(TEXT("RTS.Command.Build.FieldCover")))
 			{
-				Slot.SlotIndex = 0;
-				Slot.DisplayName = TEXT("沙袋堑壕");
-				Slot.Hotkey = FName(TEXT("Q"));
+				Slot.SlotIndex = 10;
+				Slot.DisplayName = TEXT("沙袋");
+				Slot.Hotkey = FName(TEXT("Z"));
 			}
 			else if (CommandName == FName(TEXT("RTS.Command.Build.AntiAircraftEmplacement")))
 			{
-				Slot.SlotIndex = 3;
-				Slot.DisplayName = TEXT("防空炮阵地");
-				Slot.Hotkey = FName(TEXT("R"));
+				Slot.SlotIndex = 5;
+				Slot.DisplayName = TEXT("防空");
+				Slot.Hotkey = FName(TEXT("A"));
 			}
 			else if (CommandName == FName(TEXT("RTS.Command.Build.AntiTankObstacle")))
 			{
-				Slot.SlotIndex = 10;
+				Slot.SlotIndex = 12;
 				Slot.DisplayName = TEXT("反坦克陷阱");
-				Slot.Hotkey = FName(TEXT("Z"));
+				Slot.Hotkey = FName(TEXT("C"));
 			}
 			else if (CommandName == FName(TEXT("RTS.Command.Build.BarbedWire")))
 			{
@@ -117,7 +117,7 @@ namespace
 			NewLoadout.LoadoutId = FName(TEXT("BuilderProduction"));
 			NewLoadout.bIncludeDefaultUnitCommands = false;
 			NewLoadout.BackToLoadoutId = FName(TEXT("Builder"));
-			NewLoadout.BackButtonDisplayName = TEXT("返回军官命令");
+			NewLoadout.BackButtonDisplayName = TEXT("返回");
 			NewLoadout.BackButtonDescription = TEXT("返回军官主命令卡。");
 			NewLoadout.BackButtonHotkey = FName(TEXT("B"));
 			ProductionLoadout = &Settings->CommandLoadouts.Add_GetRef(MoveTemp(NewLoadout));
@@ -135,13 +135,13 @@ namespace
 		{
 			TankFactorySlot = &ProductionLoadout->CommandSlots.AddDefaulted_GetRef();
 		}
-		TankFactorySlot->SlotIndex = 1;
+		TankFactorySlot->SlotIndex = 2;
 		TankFactorySlot->CommandTag = TankFactoryTag;
 		TankFactorySlot->CommandTagName = TankFactoryTagName;
-		TankFactorySlot->DisplayName = TEXT("建造坦克工厂");
+		TankFactorySlot->DisplayName = TEXT("坦克工厂");
 		TankFactorySlot->Description = TEXT("指定4×4格占地后，系统指派最近的空闲同队军官，用28个游戏日完成坦克工厂。按住Shift可追加并行施工地点。");
 		TankFactorySlot->TargetType = ERTSCommandTargetType::Location;
-		TankFactorySlot->Hotkey = FName(TEXT("W"));
+		TankFactorySlot->Hotkey = FName(TEXT("E"));
 
 		FRTSMassUnitCommandSlotDefinition* VehicleFactorySlot = ProductionLoadout->CommandSlots.FindByPredicate(
 			[VehicleFactoryTagName](const FRTSMassUnitCommandSlotDefinition& Slot)
@@ -155,13 +155,13 @@ namespace
 		{
 			VehicleFactorySlot = &ProductionLoadout->CommandSlots.AddDefaulted_GetRef();
 		}
-		VehicleFactorySlot->SlotIndex = 2;
+		VehicleFactorySlot->SlotIndex = 1;
 		VehicleFactorySlot->CommandTag = VehicleFactoryTag;
 		VehicleFactorySlot->CommandTagName = VehicleFactoryTagName;
-		VehicleFactorySlot->DisplayName = TEXT("建造战车工厂");
+		VehicleFactorySlot->DisplayName = TEXT("战车工厂");
 		VehicleFactorySlot->Description = TEXT("指定4×4格占地后，系统指派最近的空闲同队军官，用28个游戏日完成战车工厂。按住Shift可追加并行施工地点。");
 		VehicleFactorySlot->TargetType = ERTSCommandTargetType::Location;
-		VehicleFactorySlot->Hotkey = FName(TEXT("E"));
+		VehicleFactorySlot->Hotkey = FName(TEXT("W"));
 	}
 
 	FGameplayTag ResolveSlotCommandTag(const FRTSMassUnitCommandSlotDefinition& Slot)
@@ -487,7 +487,7 @@ bool FRTSOfficerCommandCardTest::RunTest(const FString& Parameters)
 			});
 		if (TestNotNull(TEXT("Tank Factory build command exists"), TankFactorySlot))
 		{
-			TestEqual(TEXT("Tank Factory build command uses production submenu slot 1"), TankFactorySlot->SlotIndex, 1);
+			TestEqual(TEXT("Tank Factory build command uses production submenu slot 2"), TankFactorySlot->SlotIndex, 2);
 		}
 
 		const FRTSMassUnitCommandSlotDefinition* VehicleFactorySlot = ProductionLoadout->CommandSlots.FindByPredicate(
@@ -500,7 +500,7 @@ bool FRTSOfficerCommandCardTest::RunTest(const FString& Parameters)
 			});
 		if (TestNotNull(TEXT("Vehicle Factory build command exists"), VehicleFactorySlot))
 		{
-			TestEqual(TEXT("Vehicle Factory build command uses production submenu slot 2"), VehicleFactorySlot->SlotIndex, 2);
+			TestEqual(TEXT("Vehicle Factory build command uses production submenu slot 1"), VehicleFactorySlot->SlotIndex, 1);
 		}
 	}
 
@@ -524,11 +524,14 @@ bool FRTSOfficerCommandCardTest::RunTest(const FString& Parameters)
 				TestEqual(FString::Printf(TEXT("Defense command %s slot"), TagName), Slot->SlotIndex, ExpectedSlot);
 			}
 		};
-		TestCommandSlot(TEXT("RTS.Command.Build.FieldCover"), 0);
+		TestCommandSlot(TEXT("RTS.Command.Build.GarrisonBunker"), 0);
+		TestCommandSlot(TEXT("RTS.Command.Build.MortarBunker"), 3);
+		TestCommandSlot(TEXT("RTS.Command.Build.CoastalBattery"), 6);
+		TestCommandSlot(TEXT("RTS.Command.Build.FieldCover"), 10);
 		TestCommandSlot(TEXT("RTS.Command.Build.MachineGunBunker"), 1);
 		TestCommandSlot(TEXT("RTS.Command.Build.AntiTankBunker"), 2);
-		TestCommandSlot(TEXT("RTS.Command.Build.AntiAircraftEmplacement"), 3);
-		TestCommandSlot(TEXT("RTS.Command.Build.AntiTankObstacle"), 10);
+		TestCommandSlot(TEXT("RTS.Command.Build.AntiAircraftEmplacement"), 5);
+		TestCommandSlot(TEXT("RTS.Command.Build.AntiTankObstacle"), 12);
 		TestCommandSlot(TEXT("RTS.Command.Build.BarbedWire"), 11);
 	}
 	return true;

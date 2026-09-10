@@ -1,7 +1,6 @@
 #include "UI/RTSUnitIconWidget.h"
 #include "RTSSelectionSubsystem.h"
 #include "UI/RTSTooltipWidget.h"
-#include "Interfaces/RTSCommandProgressController.h"
 #include "Blueprint/WidgetTree.h"
 #include "Components/Border.h"
 #include "Components/Image.h"
@@ -193,18 +192,14 @@ void URTSUnitIconWidget::InitData(const FRTSUnitData& Data, bool bShowIcon, bool
 	{
 		if (UnitSlotFrame)
 		{
-			const bool bShowCommandFrame = Data.bIsCommandProgressItem;
-			UnitSlotFrame->SetRenderOpacity(bShowCommandFrame ? 1.0f : 0.0f);
-			UnitSlotFrame->SetVisibility(bShowCommandFrame
-				? ESlateVisibility::HitTestInvisible
-				: ESlateVisibility::Hidden);
+			UnitSlotFrame->SetVisibility(ESlateVisibility::Hidden);
 		}
 
 		if (UOverlaySlot* IconSlot = Cast<UOverlaySlot>(UnitIcon->Slot))
 		{
 			IconSlot->SetPadding(FMargin(0.0f));
-			IconSlot->SetHorizontalAlignment(HAlign_Fill);
-			IconSlot->SetVerticalAlignment(VAlign_Fill);
+			IconSlot->SetHorizontalAlignment(HAlign_Center);
+			IconSlot->SetVerticalAlignment(VAlign_Center);
 		}
 
 		if (!bShowIcon)
@@ -269,34 +264,19 @@ void URTSUnitIconWidget::InitData(const FRTSUnitData& Data, bool bShowIcon, bool
 			: ESlateVisibility::Collapsed);
 	}
 
-	const FString ProductionLine = BuildUnitProductionLine(Data);
 	if (ActivityText)
 	{
-		ActivityText->SetText(FText::FromString(ProductionLine));
-		ActivityText->SetVisibility(ProductionLine.IsEmpty()
-			? ESlateVisibility::Collapsed
-			: ESlateVisibility::HitTestInvisible);
+		ActivityText->SetVisibility(ESlateVisibility::Collapsed);
 	}
 
 	if (CancelHintText)
 	{
-		const bool bShowCancel =
-			Data.bIsCommandProgressItem
-			&& Data.bCanCancelCommandProgressItem;
-		CancelHintText->SetVisibility(bShowCancel
-			? ESlateVisibility::HitTestInvisible
-			: ESlateVisibility::Collapsed);
+		CancelHintText->SetVisibility(ESlateVisibility::Collapsed);
 	}
 
 	if (UnitNameText)
 	{
-		const FString VisibleName = !ActivityText && !ProductionLine.IsEmpty()
-			? FString::Printf(TEXT("%s\n%s"), *Data.Name, *ProductionLine)
-			: Data.Name;
-		UnitNameText->SetText(FText::FromString(VisibleName));
-		UnitNameText->SetVisibility(Data.Name.IsEmpty()
-			? ESlateVisibility::Collapsed
-			: ESlateVisibility::HitTestInvisible);
+		UnitNameText->SetVisibility(ESlateVisibility::Collapsed);
 	}
 
 	if (CountText)
@@ -401,48 +381,11 @@ UWidget* URTSUnitIconWidget::GetOrCreateTooltipWidget()
 	return UnitTooltipWidget;
 }
 
-FReply URTSUnitIconWidget::NativeOnPreviewMouseButtonDown(
-	const FGeometry& InGeometry,
-	const FPointerEvent& InMouseEvent)
-{
-	if (InMouseEvent.GetEffectingButton() == EKeys::LeftMouseButton
-		&& StoredData.bIsCommandProgressItem)
-	{
-		UObject* ActionTarget = StoredData.CommandProgressActionTarget.Get();
-		if (StoredData.bCanCancelCommandProgressItem
-			&& ActionTarget
-			&& ActionTarget->Implements<URTSCommandProgressController>())
-		{
-			IRTSCommandProgressController::
-				Execute_RequestCancelCommandProgressItem(
-					ActionTarget,
-					StoredData.CommandProgressItemId);
-		}
-		return FReply::Handled();
-	}
-	return Super::NativeOnPreviewMouseButtonDown(InGeometry, InMouseEvent);
-}
-
 FReply URTSUnitIconWidget::NativeOnMouseButtonDown(const FGeometry& InGeometry, const FPointerEvent& InMouseEvent)
 {
 	// Check for Left Click
 	if (InMouseEvent.GetEffectingButton() == EKeys::LeftMouseButton)
 	{
-		if (StoredData.bIsCommandProgressItem)
-		{
-			UObject* ActionTarget = StoredData.CommandProgressActionTarget.Get();
-			if (StoredData.bCanCancelCommandProgressItem
-				&& ActionTarget
-				&& ActionTarget->Implements<URTSCommandProgressController>())
-			{
-				IRTSCommandProgressController::
-					Execute_RequestCancelCommandProgressItem(
-						ActionTarget,
-						StoredData.CommandProgressItemId);
-			}
-			return FReply::Handled();
-		}
-
 		if (APlayerController* PC = GetOwningPlayer())
 		{
 			if (ULocalPlayer* LP = PC->GetLocalPlayer())

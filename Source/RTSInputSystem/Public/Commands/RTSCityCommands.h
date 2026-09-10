@@ -65,6 +65,63 @@ public:
 	}
 };
 
+/** Officer construction card: GarrisonBunker. */
+UCLASS()
+class RTSINPUTSYSTEM_API URTSCmd_BuildGarrisonBunker : public URTSBuiltinCommandButton
+{
+	GENERATED_BODY()
+public:
+	URTSCmd_BuildGarrisonBunker()
+	{
+		CommandTag = FGameplayTag::RequestGameplayTag(FName(TEXT("RTS.Command.Build.GarrisonBunker")), false);
+		TargetType = ERTSCommandTargetType::Location;
+		DisplayName = FText::FromString(TEXT("碉堡"));
+		Description = FText::FromString(TEXT("选择位置建造碉堡。"));
+		PreferredIndex = 0;
+		PlacementFootprintCells = FIntPoint(2, 2);
+		PlacementPreviewMesh = TSoftObjectPtr<UStaticMesh>(FSoftObjectPath(TEXT(
+			"/Game/Unit/Actor/Building/Defence/WW2/Common/Gen_Common_GarrisonBunker_FourPorts_Handpainted/SM_Common_GarrisonBunker_FourPorts_Handpainted.SM_Common_GarrisonBunker_FourPorts_Handpainted")));
+	}
+};
+
+/** Officer construction card: MortarEmplacement. */
+UCLASS()
+class RTSINPUTSYSTEM_API URTSCmd_BuildMortarBunker : public URTSBuiltinCommandButton
+{
+	GENERATED_BODY()
+public:
+	URTSCmd_BuildMortarBunker()
+	{
+		CommandTag = FGameplayTag::RequestGameplayTag(FName(TEXT("RTS.Command.Build.MortarBunker")), false);
+		TargetType = ERTSCommandTargetType::Location;
+		DisplayName = FText::FromString(TEXT("迫击炮碉堡"));
+		Description = FText::FromString(TEXT("选择位置建造迫击炮碉堡。"));
+		PreferredIndex = 3;
+		PlacementFootprintCells = FIntPoint(2, 2);
+		PlacementPreviewMesh = TSoftObjectPtr<UStaticMesh>(FSoftObjectPath(TEXT(
+			"/Game/Unit/Actor/Building/Defence/WW2/Common/Gen_Common_MortarEmplacement_OpenPit_Handpainted/SM_Common_MortarEmplacement_OpenPit_Handpainted.SM_Common_MortarEmplacement_OpenPit_Handpainted")));
+	}
+};
+
+/** Officer construction card: CoastalBattery. */
+UCLASS()
+class RTSINPUTSYSTEM_API URTSCmd_BuildCoastalBattery : public URTSBuiltinCommandButton
+{
+	GENERATED_BODY()
+public:
+	URTSCmd_BuildCoastalBattery()
+	{
+		CommandTag = FGameplayTag::RequestGameplayTag(FName(TEXT("RTS.Command.Build.CoastalBattery")), false);
+		TargetType = ERTSCommandTargetType::Location;
+		DisplayName = FText::FromString(TEXT("岸防炮"));
+		Description = FText::FromString(TEXT("选择位置建造岸防炮。"));
+		PreferredIndex = 6;
+		PlacementFootprintCells = FIntPoint(2, 2);
+		PlacementPreviewMesh = TSoftObjectPtr<UStaticMesh>(FSoftObjectPath(TEXT(
+			"/Game/Unit/Actor/Building/Defence/WW2/Common/Gen_Common_CoastalBattery_HeavyGun_Handpainted/SM_Common_CoastalBattery_HeavyGun_Handpainted.SM_Common_CoastalBattery_HeavyGun_Handpainted")));
+	}
+};
+
 /** Officer order: merged hexagonal sandbag cover. */
 UCLASS()
 class RTSINPUTSYSTEM_API URTSCmd_BuildFieldCover : public URTSBuiltinCommandButton
@@ -75,9 +132,9 @@ public:
 	{
 		CommandTag = FGameplayTag::RequestGameplayTag(FName("RTS.Command.Build.FieldCover"), false);
 		TargetType = ERTSCommandTargetType::Location;
-		DisplayName = FText::FromString(TEXT("沙袋堑壕"));
-		Description = FText::FromString(TEXT("第一排碉堡：六边形三层沙袋工事，同时代表堑壕、掩体与碉堡。优先由附近同队步兵施工；附近没有步兵时由军官亲自施工。"));
-		PreferredIndex = 0;
+		DisplayName = FText::FromString(TEXT("沙袋"));
+		Description = FText::FromString(TEXT("修建六边形三层沙袋工事。优先由附近同队步兵施工；附近没有步兵时由军官亲自施工。"));
+		PreferredIndex = 10;
 		DefaultCooldown = 0.0f;
 		PlacementFootprintCells = FIntPoint(2, 2);
 	}
@@ -133,9 +190,9 @@ public:
 	{
 		CommandTag = FGameplayTag::RequestGameplayTag(FName("RTS.Command.Build.AntiAircraftEmplacement"), false);
 		TargetType = ERTSCommandTargetType::Location;
-		DisplayName = FText::FromString(TEXT("防空炮阵地"));
+		DisplayName = FText::FromString(TEXT("防空"));
 		Description = FText::FromString(TEXT("修建双联机关炮防空阵地，以高仰角火力保护附近部队和建筑。优先由附近同队步兵施工。"));
-		PreferredIndex = 3;
+		PreferredIndex = 5;
 		DefaultCooldown = 0.0f;
 		LowValueCost = 220;
 		HighValueCost = 40;
@@ -157,7 +214,7 @@ public:
 		TargetType = ERTSCommandTargetType::Location;
 		DisplayName = FText::FromString(TEXT("反坦克陷阱"));
 		Description = FText::FromString(TEXT("第三排增益/减益工事：六边形反坦克障碍阵地，使敌方坦克减速并削弱装甲。优先由附近同队步兵施工。"));
-		PreferredIndex = 10;
+		PreferredIndex = 12;
 		DefaultCooldown = 0.0f;
 		PlacementFootprintCells = FIntPoint(2, 2);
 	}

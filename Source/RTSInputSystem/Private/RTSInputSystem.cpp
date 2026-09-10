@@ -31,6 +31,9 @@ void FRTSInputSystemModule::StartupModule()
 	TagsManager.AddNativeGameplayTag(FName(TEXT("RTS.Command.City.BuildBase")), TEXT("Build a military base inside the selected captured city."));
 	TagsManager.AddNativeGameplayTag(FName(TEXT("RTS.Command.City.Transfer")), TEXT("Transfer the selected city to an allied team."));
 	TagsManager.AddNativeGameplayTag(FName(TEXT("RTS.Command.Build.Defense")), TEXT("Officer orders nearby infantry to construct a defensive building."));
+	TagsManager.AddNativeGameplayTag(FName(TEXT("RTS.Command.Build.GarrisonBunker")), TEXT("Officer construction: GarrisonBunker."));
+	TagsManager.AddNativeGameplayTag(FName(TEXT("RTS.Command.Build.MortarBunker")), TEXT("Officer construction: MortarEmplacement."));
+	TagsManager.AddNativeGameplayTag(FName(TEXT("RTS.Command.Build.CoastalBattery")), TEXT("Officer construction: CoastalBattery."));
 	TagsManager.AddNativeGameplayTag(FName(TEXT("RTS.Command.Build.FieldCover")), TEXT("Officer orders nearby infantry to construct the merged sandbag field cover."));
 	TagsManager.AddNativeGameplayTag(FName(TEXT("RTS.Command.Build.MachineGunBunker")), TEXT("Officer orders nearby infantry to construct a turreted machine-gun bunker."));
 	TagsManager.AddNativeGameplayTag(FName(TEXT("RTS.Command.Build.AntiTankBunker")), TEXT("Officer orders nearby infantry to construct a turreted anti-tank bunker."));

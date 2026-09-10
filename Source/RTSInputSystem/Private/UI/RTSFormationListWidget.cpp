@@ -3,6 +3,7 @@
 #include "RTSInputPanelSettings.h"
 #include "RTSSelectionSubsystem.h"
 #include "UI/RTSControlGroupButton.h"
+#include "UI/RTSCommanderGridWidget.h"
 #include "Blueprint/WidgetTree.h"
 #include "Components/HorizontalBox.h"
 #include "Components/HorizontalBoxSlot.h"
@@ -10,8 +11,7 @@
 #include "Components/PanelWidget.h"
 #include "Components/SizeBox.h"
 #include "Components/TextBlock.h"
-#include "Components/UniformGridPanel.h"
-#include "Components/UniformGridSlot.h"
+#include "Components/Spacer.h"
 #include "Components/VerticalBox.h"
 #include "Components/VerticalBoxSlot.h"
 #include "Engine/LocalPlayer.h"
@@ -79,11 +79,20 @@ void URTSFormationListWidget::ApplyFormationSettings()
 {
 	if (const URTSInputPanelSettings* Settings = GetDefault<URTSInputPanelSettings>())
 	{
-		MaxFormationSlots = FMath::Clamp(Settings->FormationListMaxSlots, 1, 10);
+		const UClass* GridClass = LoadClass<URTSCommanderGridWidget>(nullptr,
+			TEXT("/Game/UI/HeadUpDisplay/ControlGird/ControlGrid.ControlGrid_C"));
+		const URTSCommanderGridWidget* GridDefaults = GridClass
+			? GridClass->GetDefaultObject<URTSCommanderGridWidget>()
+			: GetDefault<URTSCommanderGridWidget>();
+		const FMargin ButtonPadding = GridDefaults->GetSlotPadding();
+		const float CellWidth = GridDefaults->GetButtonSize().X + ButtonPadding.Left + ButtonPadding.Right;
 		FormationSlotWidth = FMath::Max(1, Settings->FormationListSlotWidth);
 		FormationSlotHeight = FMath::Max(1, Settings->FormationListSlotHeight);
-		FormationColumns = FMath::Clamp(Settings->SelectionGridColumns, 1, 10);
-		FormationSlotGap = FMath::Max(0.0f, Settings->FormationListSlotGap);
+		FormationEdgePadding = FMargin(ButtonPadding.Left, 0.0f, ButtonPadding.Right, 0.0f);
+		const int32 SlotCount = UE_ARRAY_COUNT(FormationControlGroupDisplayOrder);
+		const float StripWidth = FMath::Max(8, Settings->SelectionGridColumns) * CellWidth;
+		FormationSlotGap = FMath::Max(0.0f, (StripWidth - ButtonPadding.Left - ButtonPadding.Right
+			- SlotCount * FormationSlotWidth) / (SlotCount - 1));
 	}
 }
 
@@ -96,24 +105,21 @@ void URTSFormationListWidget::BuildSlotPool()
 	}
 
 	FormationSlotContainer->ClearChildren();
-	ControlGroupButtons.Reset();
-	ControlGroupSlotBoxes.Reset();
-	ControlGroupGrid = WidgetTree->ConstructWidget<UUniformGridPanel>(
-		UUniformGridPanel::StaticClass(),
+	ControlGroupButtons.SetNumZeroed(10);
+	ControlGroupGrid = WidgetTree->ConstructWidget<UHorizontalBox>(
+		UHorizontalBox::StaticClass(),
 		TEXT("ControlGroupGrid"));
 	if (!ControlGroupGrid)
 	{
 		return;
 	}
 
-	ControlGroupGrid->SetMinDesiredSlotWidth(FormationSlotWidth);
-	ControlGroupGrid->SetMinDesiredSlotHeight(FormationSlotHeight);
-	ControlGroupGrid->SetSlotPadding(FMargin(0.0f, 0.0f, 0.0f, FormationSlotGap));
 	FormationSlotContainer->AddChild(ControlGroupGrid);
 	if (UHorizontalBoxSlot* GridHostSlot = Cast<UHorizontalBoxSlot>(ControlGroupGrid->Slot))
 	{
 		GridHostSlot->SetHorizontalAlignment(HAlign_Left);
 		GridHostSlot->SetVerticalAlignment(VAlign_Center);
+		GridHostSlot->SetPadding(FormationEdgePadding);
 	}
 
 	if (!ControlGroupButtonClass)
@@ -121,9 +127,15 @@ void URTSFormationListWidget::BuildSlotPool()
 		ControlGroupButtonClass = URTSControlGroupButton::StaticClass();
 	}
 
-	const int32 SlotCount = FMath::Min(MaxFormationSlots, static_cast<int32>(UE_ARRAY_COUNT(FormationControlGroupDisplayOrder)));
+	const int32 SlotCount = UE_ARRAY_COUNT(FormationControlGroupDisplayOrder);
 	for (int32 SlotIndex = 0; SlotIndex < SlotCount; ++SlotIndex)
 	{
+		if (SlotIndex > 0)
+		{
+			USpacer* Gap = WidgetTree->ConstructWidget<USpacer>();
+			Gap->SetSize(FVector2D(FormationSlotGap, 0.0f));
+			ControlGroupGrid->AddChildToHorizontalBox(Gap);
+		}
 		const int32 GroupIndex = FormationControlGroupDisplayOrder[SlotIndex];
 		URTSControlGroupButton* Button = WidgetTree->ConstructWidget<URTSControlGroupButton>(
 			ControlGroupButtonClass,
@@ -159,8 +171,9 @@ void URTSFormationListWidget::BuildSlotPool()
 		}
 
 		Button->AddChild(CardRow);
-		PortraitBox->SetWidthOverride(FormationSlotHeight);
-		PortraitBox->SetHeightOverride(FormationSlotHeight);
+		const float PortraitSize = FMath::Min(static_cast<float>(FormationSlotHeight), FormationSlotWidth * 0.5f);
+		PortraitBox->SetWidthOverride(PortraitSize);
+		PortraitBox->SetHeightOverride(PortraitSize);
 		PortraitBox->SetContent(Icon);
 		if (UHorizontalBoxSlot* PortraitSlot = CardRow->AddChildToHorizontalBox(PortraitBox))
 		{
@@ -168,7 +181,7 @@ void URTSFormationListWidget::BuildSlotPool()
 			AutoSize.SizeRule = ESlateSizeRule::Automatic;
 			PortraitSlot->SetSize(AutoSize);
 			PortraitSlot->SetHorizontalAlignment(HAlign_Fill);
-			PortraitSlot->SetVerticalAlignment(VAlign_Fill);
+			PortraitSlot->SetVerticalAlignment(VAlign_Center);
 		}
 
 		if (UHorizontalBoxSlot* InfoSlot = CardRow->AddChildToHorizontalBox(InfoBox))
@@ -182,7 +195,7 @@ void URTSFormationListWidget::BuildSlotPool()
 			InfoSlot->SetPadding(FMargin(6.0f, 2.0f, 4.0f, 2.0f));
 		}
 
-		NumberText->SetText(FText::Format(FText::FromString(TEXT("编队 {0}")), FText::AsNumber(GroupIndex)));
+		NumberText->SetText(FText::AsNumber(GroupIndex));
 		NumberText->SetColorAndOpacity(FSlateColor(FLinearColor(0.78f, 1.0f, 0.91f, 1.0f)));
 		NumberText->SetShadowColorAndOpacity(FLinearColor::Black);
 		NumberText->SetShadowOffset(FVector2D(1.0f, 1.0f));
@@ -203,7 +216,7 @@ void URTSFormationListWidget::BuildSlotPool()
 		CountText->SetShadowColorAndOpacity(FLinearColor::Black);
 		CountText->SetShadowOffset(FVector2D(1.0f, 1.0f));
 		FSlateFontInfo CountFont = CountText->GetFont();
-		CountFont.Size = FMath::Max(24, FormationSlotHeight * 3 / 8);
+		CountFont.Size = FMath::Max(14, FormationSlotHeight / 4);
 		CountText->SetFont(CountFont);
 		if (UVerticalBoxSlot* CountSlot = InfoBox->AddChildToVerticalBox(CountText))
 		{
@@ -227,19 +240,18 @@ void URTSFormationListWidget::BuildSlotPool()
 
 		SlotBox->SetWidthOverride(FormationSlotWidth);
 		SlotBox->SetHeightOverride(FormationSlotHeight);
+		SlotBox->SetClipping(EWidgetClipping::ClipToBounds);
 		SlotBox->SetContent(Button);
-		if (UUniformGridSlot* GridSlot = ControlGroupGrid->AddChildToUniformGrid(SlotBox, 0, SlotIndex))
+		if (UHorizontalBoxSlot* GridSlot = ControlGroupGrid->AddChildToHorizontalBox(SlotBox))
 		{
 			GridSlot->SetHorizontalAlignment(HAlign_Fill);
 			GridSlot->SetVerticalAlignment(VAlign_Fill);
 		}
 
-		SlotBox->SetVisibility(ESlateVisibility::Collapsed);
-		ControlGroupButtons.Add(Button);
-		ControlGroupSlotBoxes.Add(SlotBox);
+		ControlGroupButtons[GroupIndex] = Button;
 	}
 
-	SetVisibility(ESlateVisibility::Collapsed);
+	SetVisibility(ESlateVisibility::SelfHitTestInvisible);
 }
 
 void URTSFormationListWidget::OnControlGroupsUpdated(const FRTSControlGroupsView& View)
@@ -250,40 +262,20 @@ void URTSFormationListWidget::OnControlGroupsUpdated(const FRTSControlGroupsView
 
 void URTSFormationListWidget::RefreshControlGroups(const FRTSControlGroupsView& View)
 {
-	int32 VisibleCardIndex = 0;
-	for (int32 ButtonIndex = 0; ButtonIndex < ControlGroupButtons.Num(); ++ButtonIndex)
+	for (URTSControlGroupButton* Button : ControlGroupButtons)
 	{
-		URTSControlGroupButton* Button = ControlGroupButtons[ButtonIndex];
-		USizeBox* SlotBox = ControlGroupSlotBoxes.IsValidIndex(ButtonIndex) ? ControlGroupSlotBoxes[ButtonIndex] : nullptr;
-		if (!Button)
-		{
-			continue;
-		}
-
-		const FRTSControlGroupView* GroupView = View.Groups.FindByPredicate([Button](const FRTSControlGroupView& Candidate)
-		{
-			return Candidate.GroupIndex == Button->ControlGroupIndex;
-		});
+		if (!Button) continue;
+		const FRTSControlGroupView* GroupView = View.Groups.FindByPredicate(
+			[Button](const FRTSControlGroupView& Group) { return Group.GroupIndex == Button->ControlGroupIndex; });
 		if (GroupView)
 		{
 			Button->ApplyControlGroupView(*GroupView);
 		}
-
-		const bool bShowCard = GroupView && GroupView->bAssigned;
-		if (SlotBox)
+		else
 		{
-			SlotBox->SetVisibility(bShowCard ? ESlateVisibility::Visible : ESlateVisibility::Collapsed);
-			if (bShowCard)
-			{
-				if (UUniformGridSlot* GridSlot = Cast<UUniformGridSlot>(SlotBox->Slot))
-				{
-					GridSlot->SetRow(VisibleCardIndex / FMath::Max(1, FormationColumns));
-					GridSlot->SetColumn(VisibleCardIndex % FMath::Max(1, FormationColumns));
-				}
-				++VisibleCardIndex;
-			}
+			FRTSControlGroupView EmptyGroup;
+			EmptyGroup.GroupIndex = Button->ControlGroupIndex;
+			Button->ApplyControlGroupView(EmptyGroup);
 		}
 	}
-
-	SetVisibility(VisibleCardIndex > 0 ? ESlateVisibility::SelfHitTestInvisible : ESlateVisibility::Collapsed);
 }

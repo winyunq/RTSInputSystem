@@ -14,6 +14,7 @@ class UWidget;
 class URTSCommandButtonWidget;
 class URTSUnitIconWidget;
 class UProgressBar;
+class USizeBox;
 class SBox;
 class SWidget;
 
@@ -71,29 +72,19 @@ protected:
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "RTS Selection")
 	int32 ItemsPerPage = 24;
 
-	/** Fixed square size for each selection panel cell. */
+	/** Icon artwork size only. The full cell uses the shared command button footprint and padding. */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "RTS Selection")
 	int32 IconSlotSize = 128;
-
-	/** Compact icon size used by training/research queue entries. */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "RTS Selection|Activity")
-	int32 ActivityIconSlotSize = 88;
 
 	/** Fixed header reserve for formation/control-group information inside UnitPanel. */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "RTS Selection")
 	float PanelHeaderHeight = 44.0f;
 
-	/**
-	* Max columns for the grid. Defaults to 8.
-	* Can be overridden by explicit GridPanel column fill settings; template children do not define capacity.
-	*/
+	/** Fixed column count, at least 8. Template children never determine capacity. */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "RTS Selection")
 	int32 MaxColumns = 8;
 
-	/**
-	* Max rows for the grid. Defaults to 3.
-	* Can be overridden by explicit GridPanel row fill settings; template children do not define capacity.
-	*/
+	/** Fixed row count, at least 3. Template children never determine capacity. */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "RTS Selection")
 	int32 MaxRows = 3;
 
@@ -101,42 +92,73 @@ protected:
 	UPROPERTY(meta = (BindWidgetOptional))
 	UBorder* UnitPanelFrame;
 
-	// Optional detail stack shown beside the roster.
+	// Three overlaid routes share one fixed content area.
 	UPROPERTY(meta = (BindWidgetOptional))
-	UWidget* UnitDetailPane;
+	UWidget* SingleUnitPanel;
 
-	// List/Summary route content. Hidden for Single route.
+	// Research and weapons/armor share the right half of the single-unit body.
 	UPROPERTY(meta = (BindWidgetOptional))
 	UWidget* UnitRosterPane;
 
-	// Spacer between mutually exclusive routes when they are authored as siblings.
 	UPROPERTY(meta = (BindWidgetOptional))
-	UWidget* UnitPanelBodyGap;
+	UWidget* WeaponArmorPanel;
 
-	// UnitPanel list/summary content grid. This is content, not the UnitPanel shell.
+	UPROPERTY(meta = (BindWidgetOptional))
+	USizeBox* UnitPanelRouteBounds;
+
+	UPROPERTY(meta = (BindWidgetOptional))
+	USizeBox* UnitPanelHeaderBounds;
+
+	UPROPERTY(meta = (BindWidgetOptional))
+	UPanelWidget* SummaryIconContainer;
+
+	UPROPERTY(meta = (BindWidgetOptional))
+	UPanelWidget* ActivityQueueContainer;
+
+	// Individual-unit list grid; summary and production use their own containers.
 	// Child 0 can be a unit icon template; runtime builds the fixed grid pool from it.
 	UPROPERTY(meta = (BindWidget))
 	UPanelWidget* IconContainer;
+
+	UPROPERTY(meta = (BindWidgetOptional))
+	UProgressBar* ActiveProgress0;
+
+	UPROPERTY(meta = (BindWidgetOptional))
+	UProgressBar* ActiveProgress1;
 
 private:
 	void ApplySelectionPanelLayoutSettings();
 	void ApplyFixedPanelSlotLayout();
 	FVector2D CalculateFixedPanelSize() const;
+	FVector2D GetSelectionCellSize() const;
 	void ApplyFixedPanelBounds();
+	void BuildSelectionGrid(UPanelWidget* Container, TArray<URTSUnitIconWidget*>& Slots, bool bSummary);
+	void SetContentRoute(ERTSSelectionMode Mode);
 
 	// Pool of re-usable icon widgets
 	UPROPERTY()
 	TArray<URTSUnitIconWidget*> IconSlots;
 
-	// Left-side activity buttons. They mirror command presentation but own their lifecycle.
+	UPROPERTY()
+	TArray<URTSUnitIconWidget*> SummaryIconSlots;
+
+	// References to actual moved or copied command buttons currently shown here.
 	UPROPERTY()
 	TArray<URTSCommandButtonWidget*> ProgressButtonSlots;
+
+	// Empty fixed queue cells are frames, never stand-ins for live research buttons.
+	UPROPERTY()
+	TArray<URTSCommandButtonWidget*> EmptyQueueFrames;
+
 
 	// Pool of re-usable count widgets (for Summary mode)
 	UPROPERTY()
 	TArray<UTextBlock*> CountSlots;
 
 	TSharedPtr<SBox> FixedPanelBoundsBox;
+	FVector2D SelectionButtonSize = FVector2D(144.0f, 144.0f);
+	FMargin SelectionSlotPadding = FMargin(4.0f);
+	bool bHasAssignedControlGroups = false;
 	TWeakObjectPtr<AActor> DisplayedProgressProvider;
 	FRTSUnitData DisplayedSingleUnitData;
 	FDelegateHandle CommandProgressChangedHandle;

@@ -88,6 +88,12 @@ void URTSControlGroupButton::HandleControlGroupsChanged(const FRTSControlGroupsV
 	{
 		ApplyControlGroupView(*MatchingView);
 	}
+	else
+	{
+		FRTSControlGroupView EmptyView;
+		EmptyView.GroupIndex = ControlGroupIndex;
+		ApplyControlGroupView(EmptyView);
+	}
 }
 
 void URTSControlGroupButton::ApplyControlGroupView(const FRTSControlGroupView& GroupView)
@@ -98,14 +104,15 @@ void URTSControlGroupButton::ApplyControlGroupView(const FRTSControlGroupView& G
 	}
 
 	CurrentGroupView = GroupView;
+	// Empty groups retain their numbered slot but neither paint nor receive input.
+	SetVisibility(GroupView.bAssigned && GroupView.UnitCount > 0
+		? ESlateVisibility::Visible : ESlateVisibility::Hidden);
 	SetBackgroundColor(GroupView.bActive ? ActiveGroupColor : (GroupView.bAssigned ? AssignedGroupColor : EmptyGroupColor));
 	SetToolTipText(BuildTooltip(GroupView));
 
 	if (GroupNumberText)
 	{
-		GroupNumberText->SetText(FText::Format(
-			FText::FromString(TEXT("编队 {0}")),
-			FText::AsNumber(ControlGroupIndex)));
+		GroupNumberText->SetText(FText::AsNumber(ControlGroupIndex));
 	}
 	if (GroupCountText)
 	{

@@ -8,8 +8,7 @@
 #include "RTSFormationListWidget.generated.h"
 
 class UPanelWidget;
-class USizeBox;
-class UUniformGridPanel;
+class UHorizontalBox;
 class URTSControlGroupButton;
 
 /** Persistent 0-9 control-group strip for the bottom UnitDetailPanel header. */
@@ -33,20 +32,12 @@ protected:
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "RTS Control Groups")
 	TSubclassOf<URTSControlGroupButton> ControlGroupButtonClass;
 
-	/** The runtime supports keyboard groups 0-9; values are clamped to ten. */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "RTS Control Groups", meta = (ClampMin = "1", ClampMax = "10"))
-	int32 MaxFormationSlots = 10;
-
-	/** Readable card geometry; defaults align one card with one selection-grid column. */
+	/** Fixed card width; surplus strip width is distributed between cards. */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "RTS Control Groups", meta = (ClampMin = "1"))
-	int32 FormationSlotWidth = 128;
+	float FormationSlotWidth = 102.0f;
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "RTS Control Groups", meta = (ClampMin = "1"))
 	int32 FormationSlotHeight = 64;
-
-	/** Visible assigned cards wrap after this many columns. */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "RTS Control Groups", meta = (ClampMin = "1", ClampMax = "10"))
-	int32 FormationColumns = 8;
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "RTS Control Groups", meta = (ClampMin = "0"))
 	float FormationSlotGap = 4.0f;
@@ -62,11 +53,11 @@ private:
 	UPROPERTY()
 	TArray<URTSControlGroupButton*> ControlGroupButtons;
 
-	UPROPERTY()
-	TArray<USizeBox*> ControlGroupSlotBoxes;
 
 	UPROPERTY(Transient)
-	TObjectPtr<UUniformGridPanel> ControlGroupGrid;
+	TObjectPtr<UHorizontalBox> ControlGroupGrid;
+
+	FMargin FormationEdgePadding;
 
 	void ApplyFormationSettings();
 	void BuildSlotPool();

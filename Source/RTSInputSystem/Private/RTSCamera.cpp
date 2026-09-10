@@ -13,6 +13,9 @@ DEFINE_LOG_CATEGORY_STATIC(LogRTSCamera, Log, All);
 #include "Engine/World.h"
 #include "EnhancedInputComponent.h"
 #include "EnhancedInputSubsystems.h"
+#include "Framework/Application/SlateApplication.h"
+#include "Framework/Application/SlateUser.h"
+#include "Widgets/SViewport.h"
 #include "Kismet/GameplayStatics.h"
 #include "Misc/App.h"
 #include "Misc/ConfigCacheIni.h"
@@ -57,6 +60,26 @@ namespace
 		return FPaths::ProjectConfigDir() / MapRegionDirectoryName / GetCleanMapName(World) / MapRegionFileName;
 	}
 
+	FString GetMapRegionSectionName(const UWorld* World)
+	{
+		FString Profile = World
+			? World->URL.GetOption(TEXT("MapRegionProfile="), TEXT(""))
+			: FString();
+		Profile.TrimStartAndEndInline();
+		for (const TCHAR Character : Profile)
+		{
+			if (!FChar::IsAlnum(Character)
+				&& Character != TEXT('_') && Character != TEXT('-'))
+			{
+				Profile.Reset();
+				break;
+			}
+		}
+		return Profile.IsEmpty()
+			? FString(MapRegionSectionName)
+			: FString::Printf(TEXT("%s.%s"), MapRegionSectionName, *Profile);
+	}
+
 	void ApplyDefaultMapRegion(FRTSCameraBoundaryData& OutData)
 	{
 		OutData.Origin = FVector::ZeroVector;
@@ -86,10 +109,15 @@ namespace
 		return OutData.Extents.X > 0.0f && OutData.Extents.Y > 0.0f;
 	}
 
-	void LoadMapRegionIni(const UWorld* World, FRTSCameraBoundaryData& OutData, FString& OutIniPath)
+	void LoadMapRegionIni(
+		const UWorld* World,
+		FRTSCameraBoundaryData& OutData,
+		FString& OutIniPath,
+		FString& OutSectionName)
 	{
 		FConfigFile IniFile;
 		OutIniPath = GetMapRegionIniPath(World);
+		OutSectionName = GetMapRegionSectionName(World);
 		if (!FPaths::FileExists(OutIniPath))
 		{
 			ApplyDefaultMapRegion(OutData);
@@ -97,8 +125,14 @@ namespace
 		}
 		IniFile.Read(OutIniPath);
 
-		if (TryLoadSection(IniFile, MapRegionSectionName, OutData))
+		if (TryLoadSection(IniFile, *OutSectionName, OutData))
 		{
+			return;
+		}
+		if (OutSectionName != MapRegionSectionName
+			&& TryLoadSection(IniFile, MapRegionSectionName, OutData))
+		{
+			OutSectionName = MapRegionSectionName;
 			return;
 		}
 
@@ -581,7 +615,9 @@ bool URTSCamera::initializeMovementBoundsFromMapRegion()
 
 	FRTSCameraBoundaryData RegionBoundaryData;
 	FString MapRegionIniPath;
-	LoadMapRegionIni(World, RegionBoundaryData, MapRegionIniPath);
+	FString MapRegionSection;
+	LoadMapRegionIni(
+		World, RegionBoundaryData, MapRegionIniPath, MapRegionSection);
 
 	this->bHasResolvedBoundaryData = true;
 	this->ResolvedBoundaryOrigin = RegionBoundaryData.Origin;
@@ -593,8 +629,10 @@ bool URTSCamera::initializeMovementBoundsFromMapRegion()
 	this->getViewportSizePixels(viewportSize);
 	this->recalculateBoundaryReachFactors(viewportSize);
 
-	UE_LOG(LogRTSCamera, Log, TEXT("RTSCamera 初始化: 边界源 [%s], 逻辑边界: %.1f x %.1f, 溢出保护: %.1f"),
-		*MapRegionIniPath, logicalExtent.X * 2.0f, logicalExtent.Y * 2.0f, RegionBoundaryData.MapOverflowUU);
+	UE_LOG(LogRTSCamera, Log, TEXT("RTSCamera 初始化: 边界源 [%s] 区域 [%s], 逻辑边界: %.1f x %.1f, 溢出保护: %.1f"),
+		*MapRegionIniPath, *MapRegionSection,
+		logicalExtent.X * 2.0f, logicalExtent.Y * 2.0f,
+		RegionBoundaryData.MapOverflowUU);
 	this->applyBoundaryConstraints();
 	this->updateMinimapFrustum();
 	return true;
@@ -705,12 +743,29 @@ bool URTSCamera::executeEdgeScrollingEvaluation(
 		return false;
 	}
 
-	// Keep pointer and extent in the same Slate-local coordinate space. Unlike
-	// APlayerController::GetMousePosition, this remains valid at and just beyond
-	// a PIE viewport edge when another system configures DoNotLock.
+	const ULocalPlayer* LocalPlayer = this->realTimeStrategyPlayerController
+		? this->realTimeStrategyPlayerController->GetLocalPlayer() : nullptr;
+	UGameViewportClient* ViewportClient = LocalPlayer ? LocalPlayer->ViewportClient : nullptr;
+	FViewport* Viewport = ViewportClient ? ViewportClient->Viewport : nullptr;
+	const TSharedPtr<const FSlateUser> User = LocalPlayer ? LocalPlayer->GetSlateUser() : nullptr;
+	const TSharedPtr<SViewport> ViewportWidget = ViewportClient ? ViewportClient->GetGameViewportWidget() : nullptr;
+	if (!Viewport || !Viewport->IsForegroundWindow() || ViewportClient->IgnoreInput()
+		|| !User || !User->IsWidgetInFocusPath(ViewportWidget))
+	{
+		return false;
+	}
+
+	// HUD focus belongs to the game viewport too. Read the current Slate pointer,
+	// not the scene viewport's mouse cache, which UI can stop updating.
+	// Pointer and extent use the same Slate-local coordinates, including DPI scaling.
 	const FVector2D viewportSize =
 		UWidgetLayoutLibrary::GetViewportWidgetGeometry(this->GetWorld())
 		.GetLocalSize();
+	if (ViewportPosition.X < 0.0 || ViewportPosition.Y < 0.0
+		|| ViewportPosition.X > viewportSize.X || ViewportPosition.Y > viewportSize.Y)
+	{
+		return false;
+	}
 	const float thresholdRatio = FMath::Clamp(this->distanceFromEdgeThreshold, 0.0f, 0.5f);
 	const float horizontalThreshold = viewportSize.X * thresholdRatio;
 	const float verticalThreshold = viewportSize.Y * thresholdRatio;

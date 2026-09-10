@@ -194,7 +194,11 @@ public:
      * Issues a command targeting a specific location to all selected units.
      */
     UFUNCTION(BlueprintCallable, Category = "RTS Selection")
-    void IssueCommandWithLocation(FGameplayTag CommandTag, FVector Location, bool bQueue = false);
+    void IssueCommandWithLocation(
+		FGameplayTag CommandTag,
+		FVector Location,
+		bool bQueue = false,
+		bool bForceStrategicNavigation = false);
 
     /**
      * Issues a command targeting a specific actor to all selected units.

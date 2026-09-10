@@ -3,16 +3,31 @@
 #include "UI/RTSCommandButtonWidget.h"
 #include "UI/RTSTooltipWidget.h"
 #include "Blueprint/WidgetTree.h"
+#include "Blueprint/WidgetBlueprintLibrary.h"
 #include "Components/Overlay.h"
 #include "Components/OverlaySlot.h"
-#include "Components/ProgressBar.h"
 #include "Components/SizeBox.h"
+#include "Components/ScaleBox.h"
 #include "Components/TextBlock.h"
 #include "Components/Image.h"
 #include "Interfaces/RTSCommandInterface.h"
 #include "Interfaces/RTSCommandProgressController.h"
 #include "Materials/MaterialInstanceDynamic.h"
 #include "UI/RTSCommanderGridWidget.h"
+
+namespace
+{
+	URTSCommanderGridWidget* FindTooltipGrid(URTSCommandButtonWidget* Button)
+	{
+		if (auto* Grid = Button->GetTypedOuter<URTSCommanderGridWidget>()) return Grid;
+		TArray<UUserWidget*> Grids;
+		UWidgetBlueprintLibrary::GetAllWidgetsOfClass(Button, Grids, URTSCommanderGridWidget::StaticClass(), false);
+		for (UUserWidget* Widget : Grids)
+			if (Widget->GetOwningPlayer() == Button->GetOwningPlayer())
+				return Cast<URTSCommanderGridWidget>(Widget);
+		return nullptr;
+	}
+}
 
 TSharedRef<SWidget> URTSCommandButtonWidget::RebuildWidget()
 {
@@ -69,17 +84,6 @@ TSharedRef<SWidget> URTSCommandButtonWidget::RebuildWidget()
 			HotkeySlot->SetVerticalAlignment(VAlign_Bottom);
 		}
 
-		ActivityProgressBar = WidgetTree->ConstructWidget<UProgressBar>(
-			UProgressBar::StaticClass(), TEXT("ActivityProgressBar"));
-		ActivityProgressBar->SetFillColorAndOpacity(FLinearColor(0.2f, 0.8f, 1.0f, 1.0f));
-		ActivityProgressBar->SetVisibility(ESlateVisibility::Collapsed);
-		if (UOverlaySlot* ProgressSlot = Face->AddChildToOverlay(ActivityProgressBar))
-		{
-			ProgressSlot->SetPadding(FMargin(4.0f));
-			ProgressSlot->SetHorizontalAlignment(HAlign_Fill);
-			ProgressSlot->SetVerticalAlignment(VAlign_Bottom);
-		}
-
 		WidgetTree->RootWidget = RootSize;
 	}
 
@@ -92,7 +96,10 @@ void URTSCommandButtonWidget::NativeConstruct()
 
 	if (MainButton)
 	{
-		MainButton->OnClicked.AddUniqueDynamic(this, &URTSCommandButtonWidget::HandleClicked);
+		MainButton->OnClicked.RemoveDynamic(this, &URTSCommandButtonWidget::HandleClicked);
+		MainButton->OnClicked.RemoveDynamic(this, &URTSCommandButtonWidget::HandleProgressClicked);
+		if (bProgressItemMode) MainButton->OnClicked.AddUniqueDynamic(this, &URTSCommandButtonWidget::HandleProgressClicked);
+		else MainButton->OnClicked.AddUniqueDynamic(this, &URTSCommandButtonWidget::HandleClicked);
 		DefaultBackgroundColor = MainButton->GetBackgroundColor();
 		bHasDefaultBackgroundColor = true;
 		DefaultButtonStyle = MainButton->GetStyle();
@@ -103,7 +110,28 @@ void URTSCommandButtonWidget::NativeConstruct()
 
 void URTSCommandButtonWidget::Init(URTSCommandButton* InData, AActor* InContext, FKey InOverrideHotkey)
 {
+	if (USizeBox* RootSize = WidgetTree ? Cast<USizeBox>(WidgetTree->RootWidget) : nullptr)
+	{
+		RootSize->SetClipping(EWidgetClipping::ClipToBounds);
+		if (UScaleBox* FaceScale = Cast<UScaleBox>(RootSize->GetContent()); FaceScale && MainButton)
+		{
+			// The panel already supplies the footprint. Scale the authored face to that
+			// size, never to the label's desired size or its previous-frame wrap width.
+			const FVector2D FaceSize = MainButton->GetStyle().Normal.GetImageSize();
+			FaceScale->SetStretch(EStretch::UserSpecified);
+			FaceScale->SetUserSpecifiedScale(FMath::Min(
+				RootSize->GetWidthOverride() / FMath::Max(1.0, FaceSize.X),
+				RootSize->GetHeightOverride() / FMath::Max(1.0, FaceSize.Y)));
+		}
+	}
 	bProgressItemMode = false;
+	bReturnOnCancel = false;
+	CommandHotkey = InOverrideHotkey.IsValid() ? InOverrideHotkey : InData ? InData->Hotkey : FKey();
+	if (MainButton)
+	{
+		MainButton->OnClicked.RemoveDynamic(this, &URTSCommandButtonWidget::HandleProgressClicked);
+		MainButton->OnClicked.AddUniqueDynamic(this, &URTSCommandButtonWidget::HandleClicked);
+	}
 	bCanCancelProgressItem = false;
 	ProgressItemId = NAME_None;
 	ProgressActionTarget = nullptr;
@@ -172,12 +200,6 @@ void URTSCommandButtonWidget::Init(URTSCommandButton* InData, AActor* InContext,
 		{
 			QueueCountText->SetVisibility(ESlateVisibility::Collapsed);
 		}
-		if (ActivityProgressBar)
-		{
-			ActivityProgressBar->SetIsMarquee(false);
-			ActivityProgressBar->SetPercent(0.0f);
-			ActivityProgressBar->SetVisibility(ESlateVisibility::Collapsed);
-		}
 
         SetIsDisabled(false);
         SetVisibility(ESlateVisibility::Visible);
@@ -197,6 +219,12 @@ void URTSCommandButtonWidget::Init(URTSCommandButton* InData, AActor* InContext,
     {
         // Null data means empty slot
         if (MainButton) MainButton->SetToolTip(nullptr);
+        if (IconImage) { IconImage->SetBrushFromTexture(nullptr); IconImage->SetVisibility(ESlateVisibility::Collapsed); }
+        if (DisplayNameText) DisplayNameText->SetVisibility(ESlateVisibility::Collapsed);
+        if (HotkeyText) HotkeyText->SetVisibility(ESlateVisibility::Collapsed);
+        if (QueueCountText) QueueCountText->SetVisibility(ESlateVisibility::Collapsed);
+        if (CooldownImage) CooldownImage->SetVisibility(ESlateVisibility::Hidden);
+        if (AutoCastBorder) AutoCastBorder->SetVisibility(ESlateVisibility::Hidden);
 		bCommandActive = false;
 		bKeyboardPressed = false;
 		ApplyInteractionVisualState();
@@ -206,33 +234,17 @@ void URTSCommandButtonWidget::Init(URTSCommandButton* InData, AActor* InContext,
 
 void URTSCommandButtonWidget::InitProgressItem(
 	const FRTSTimedCommandInstance& ProgressItem,
-	AActor* InContext)
+	AActor* InContext, float IconSize)
 {
-	URTSCommandButton* Presentation = ProgressItem.CommandButton;
-	if (!Presentation)
-	{
-		if (!TransientProgressButtonData)
-		{
-			TransientProgressButtonData =
-				NewObject<URTSCommandButton>(this, TEXT("ProgressButtonPresentation"));
-		}
-		TransientProgressButtonData->CommandTag = ProgressItem.CommandTag;
-		TransientProgressButtonData->DisplayName =
-			!ProgressItem.DisplayName.IsEmpty()
-				? ProgressItem.DisplayName
-				: ProgressItem.PayloadId.IsNone()
-				? FText::FromName(ProgressItem.CommandTag.GetTagName())
-				: FText::FromName(ProgressItem.PayloadId);
-		TransientProgressButtonData->Icon = ProgressItem.Icon;
-		Presentation = TransientProgressButtonData;
-	}
 
-	const bool bPresentationChanged =
-		ButtonData != Presentation;
-	if (bPresentationChanged)
-	{
-		Init(Presentation, InContext, FKey());
-	}
+	if (WidgetTree)
+		if (USizeBox* IconBox = Cast<USizeBox>(WidgetTree->RootWidget))
+		{
+			IconBox->SetWidthOverride(IconSize);
+			IconBox->SetHeightOverride(IconSize);
+		}
+	if (ButtonData != ProgressItem.CommandButton)
+		Init(ProgressItem.CommandButton, InContext, CommandHotkey);
 
 	// The widget is the exact command-card button moved into the activity area.
 	// None of the command-card-only interaction state may travel with it: otherwise
@@ -253,7 +265,12 @@ void URTSCommandButtonWidget::InitProgressItem(
 	ApplyInteractionVisualState();
 
 	bProgressItemMode = true;
-	bCanCancelProgressItem = ProgressItem.bCanCancel;
+	if (MainButton)
+	{
+		MainButton->OnClicked.RemoveDynamic(this, &URTSCommandButtonWidget::HandleClicked);
+		MainButton->OnClicked.AddUniqueDynamic(this, &URTSCommandButtonWidget::HandleProgressClicked);
+	}
+	bCanCancelProgressItem = ProgressItem.CommandButton && ProgressItem.bCanCancel;
 	ProgressItemId = ProgressItem.InstanceId.IsValid()
 		? FName(*ProgressItem.InstanceId.ToString(EGuidFormats::Digits))
 		: NAME_None;
@@ -261,22 +278,9 @@ void URTSCommandButtonWidget::InitProgressItem(
 		? ProgressItem.Controller
 		: InContext;
 
-	if (HotkeyText)
-	{
-		HotkeyText->SetVisibility(ESlateVisibility::Collapsed);
-	}
-	if (ActivityProgressBar)
-	{
-		ActivityProgressBar->SetIsMarquee(false);
-		ActivityProgressBar->SetPercent(ProgressItem.GetProgress01());
-		ActivityProgressBar->SetVisibility(
-			ProgressItem.State == ERTSTimedCommandState::Queued
-				? ESlateVisibility::Collapsed
-				: ESlateVisibility::HitTestInvisible);
-	}
 	if (QueueCountText)
 	{
-		if (ProgressItem.State == ERTSTimedCommandState::Queued)
+		if (ProgressItem.CommandButton && ProgressItem.State == ERTSTimedCommandState::Queued)
 		{
 			QueueCountText->SetText(FText::AsNumber(ProgressItem.QueueIndex));
 			QueueCountText->SetVisibility(ESlateVisibility::HitTestInvisible);
@@ -286,31 +290,21 @@ void URTSCommandButtonWidget::InitProgressItem(
 			QueueCountText->SetVisibility(ESlateVisibility::Collapsed);
 		}
 	}
-	SetIsDisabled(!bCanCancelProgressItem);
+	SetIsDisabled(ProgressItem.CommandButton == nullptr);
 	SetVisibility(ESlateVisibility::Visible);
 }
 
 void URTSCommandButtonWidget::HandleHovered()
 {
-    // Notify Parent Grid
-    if (GetOuter())
-    {
-        if (URTSCommanderGridWidget* Grid = GetTypedOuter<URTSCommanderGridWidget>())
-        {
-            Grid->NotifyButtonHovered(this, ButtonData);
-        }
-    }
+	if (ButtonData)
+		if (URTSCommanderGridWidget* Grid = FindTooltipGrid(this))
+			Grid->NotifyButtonHovered(this, ButtonData);
 }
 
 void URTSCommandButtonWidget::HandleUnhovered()
 {
-    if (GetOuter())
-    {
-        if (URTSCommanderGridWidget* Grid = GetTypedOuter<URTSCommanderGridWidget>())
-        {
-            Grid->NotifyButtonUnhovered(this);
-        }
-    }
+	if (URTSCommanderGridWidget* Grid = FindTooltipGrid(this))
+		Grid->NotifyButtonUnhovered(this);
 }
 
 void URTSCommandButtonWidget::RefreshCommandState()
@@ -330,7 +324,7 @@ if (ButtonData && ContextActor.IsValid() && ContextActor->Implements<URTSCommand
     {
         if (ButtonData->bHideIfUnavailable)
         {
-            SetVisibility(ESlateVisibility::Collapsed);
+            SetVisibility(ESlateVisibility::Hidden);
         }
         else
         {
@@ -387,10 +381,17 @@ if (ButtonData && ContextActor.IsValid() && ContextActor->Implements<URTSCommand
              AutoCastBorder->SetVisibility(bEnabled ? ESlateVisibility::HitTestInvisible : ESlateVisibility::Hidden);
         }
     }
-else if (ButtonData && ButtonData->bAllowAutoCast && AutoCastBorder)
+else if (ButtonData)
 {
-    const bool bEnabled = ButtonData->IsAutoCastEnabledForContext(this, nullptr);
-    AutoCastBorder->SetVisibility(bEnabled ? ESlateVisibility::HitTestInvisible : ESlateVisibility::Hidden);
+    const bool bAvailable = ButtonData->IsAvailableForContext(this, GetOwningPlayer());
+    SetVisibility(!bAvailable && ButtonData->bHideIfUnavailable
+        ? ESlateVisibility::Hidden : ESlateVisibility::Visible);
+    SetIsDisabled(!bAvailable);
+    if (ButtonData->bAllowAutoCast && AutoCastBorder)
+    {
+        const bool bEnabled = ButtonData->IsAutoCastEnabledForContext(this, GetOwningPlayer());
+        AutoCastBorder->SetVisibility(bEnabled ? ESlateVisibility::HitTestInvisible : ESlateVisibility::Hidden);
+    }
 }
 
 if (ButtonData && QueueCountText)
@@ -408,7 +409,7 @@ FReply URTSCommandButtonWidget::NativeOnMouseButtonDown(const FGeometry& InGeome
     // Handle Right Click for Auto-Cast
     if (InMouseEvent.GetEffectingButton() == EKeys::RightMouseButton)
     {
-        if (ButtonData && ButtonData->bAllowAutoCast)
+        if (!bProgressItemMode && ButtonData && ButtonData->bAllowAutoCast)
         {
             if (ContextActor.IsValid() && ContextActor->Implements<URTSCommandInterface>())
             {
@@ -494,23 +495,20 @@ void URTSCommandButtonWidget::ApplyInteractionVisualState()
 
 void URTSCommandButtonWidget::HandleClicked()
 {
-	if (bProgressItemMode)
-	{
-		if (bCanCancelProgressItem
-			&& ProgressActionTarget
-			&& ProgressActionTarget->Implements<URTSCommandProgressController>())
-		{
-			IRTSCommandProgressController::
-				Execute_RequestCancelCommandProgressItem(
-					ProgressActionTarget,
-					ProgressItemId);
-		}
-		return;
-	}
-
 	if (ButtonData)
 	{
         UE_LOG(LogTemp, Verbose, TEXT("RTSCommandButtonWidget: Clicked %s"), *ButtonData->CommandTag.ToString());
 		OnCommandClicked.Broadcast(ButtonData->CommandTag);
+	}
+}
+
+void URTSCommandButtonWidget::HandleProgressClicked()
+{
+	if (bCanCancelProgressItem && ProgressActionTarget
+		&& ProgressActionTarget->Implements<URTSCommandProgressController>())
+	{
+		// On provider acknowledgement the original moves home, or the copy is deleted.
+		bReturnOnCancel = true;
+		IRTSCommandProgressController::Execute_RequestCancelCommandProgressItem(ProgressActionTarget, ProgressItemId);
 	}
 }

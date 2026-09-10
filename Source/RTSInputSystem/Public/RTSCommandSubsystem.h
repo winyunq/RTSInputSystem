@@ -6,11 +6,13 @@
 #include "Subsystems/LocalPlayerSubsystem.h"
 #include "GameplayTagContainer.h"
 #include "MassAPIStructs.h"
+#include "RTSMoveNavigationProvider.h"
 #include "RTSCommandSubsystem.generated.h"
 
 class URTSCommandGridAsset;
 class AActor;
 struct FEntityHandle;
+struct FMassBattleNetCommand;
 
 DECLARE_MULTICAST_DELEGATE_TwoParams(FOnRTSNavigationRequested, URTSCommandGridAsset*, AActor*);
 DECLARE_MULTICAST_DELEGATE_TwoParams(FOnRTSCommandIssued, FGameplayTag, AActor*);
@@ -26,6 +28,10 @@ class RTSINPUTSYSTEM_API URTSCommandSubsystem : public ULocalPlayerSubsystem
 	GENERATED_BODY()
 
 public:
+	static FName GetInputCommandTag();
+	static FName GetAdvanceCommandTag();
+	static bool IsRTSLockstepCommand(FName Tag);
+	void ExecuteLockstepCommand(const FMassBattleNetCommand& Command);
 	/** 广播给 UI，请求导航到一个网格 */
 	FOnRTSNavigationRequested OnNavigationRequested;
 
@@ -36,7 +42,11 @@ public:
 	void IssueCommand(FGameplayTag Tag, AActor* Context);
 
 	/** 发送带位移目标的指令（用于移动、攻击等按地面点目标） */
-	void IssueCommandWithLocation(FGameplayTag Tag, const FVector& Location, bool bQueue = false);
+	void IssueCommandWithLocation(
+		FGameplayTag Tag,
+		const FVector& Location,
+		bool bQueue = false,
+		bool bForceStrategicNavigation = false);
 
 	/** 发送目标实体指令（用于攻击锁定） */
 	void IssueCommandWithTarget(FGameplayTag Tag, AActor* TargetActor);
@@ -60,8 +70,13 @@ private:
 		FGameplayTag Tag;
 		FVector Location = FVector::ZeroVector;
 		bool bCanInterrupt = false;
+		ERTSMoveNavigationScale NavigationScale =
+			ERTSMoveNavigationScale::Auto;
 	};
 
+	TMap<FEntityHandle, uint32> OwnedMoveTaskIds;
+	TMap<FEntityHandle, int32> CommandGenerations;
+	TSet<FEntityHandle> PendingAdvances;
 	TMap<FEntityHandle, FGameplayTag> ActiveCommandTags;
 	TMap<FEntityHandle, TArray<FQueuedLocationCommand>> QueuedLocationCommands;
 	TSet<FEntityHandle> ActiveQueuedLocationEntities;
@@ -74,18 +89,23 @@ private:
 		bool bHasTargetActor) const;
 	FGameplayTag ResolveEntityCommandTag(const FEntityHandle& Entity) const;
 	void RecordCommandTag(const TArray<FEntityHandle>& Entities, FGameplayTag Tag);
+	void SubmitLockstepCommand(FGameplayTag Tag, const TArray<FEntityHandle>& Entities,
+		const FVector* Location, FEntityHandle Target, bool bQueue, ERTSMoveNavigationScale Scale);
 	void ExecuteCommand(
 		FGameplayTag Tag,
 		const TArray<FEntityHandle>& SelectedEntities,
 		const FVector* Location = nullptr,
-		AActor* TargetActor = nullptr,
-		bool bQueue = false
+		FEntityHandle TargetHandle = FEntityHandle(),
+		bool bQueue = false,
+		ERTSMoveNavigationScale NavigationScale =
+			ERTSMoveNavigationScale::Auto
 	);
 	void QueueLocationCommand(
 		FGameplayTag Tag,
 		const TArray<FEntityHandle>& SelectedEntities,
 		const FVector& Location,
-		bool bCanInterrupt);
+		bool bCanInterrupt,
+		ERTSMoveNavigationScale NavigationScale);
 	void ClearQueuedLocationCommands(const TArray<FEntityHandle>& Entities);
 	void AdvanceQueuedLocationCommands(const TArray<FEntityHandle>& Entities);
 
@@ -96,6 +116,13 @@ private:
 	void HandleMoveTaskTransferred(const TArray<FEntityHandle>& Entities);
 
 	bool IsEntityMoving(const FEntityHandle& Entity) const;
-	bool IssueMoveTo(const TArray<FEntityHandle>& SelectedEntities, const FVector& Location, bool bCanInterrupt);
-	bool IssueAttackTarget(const TArray<FEntityHandle>& SelectedEntities, AActor* TargetActor);
+	bool IssueMoveTo(
+		const TArray<FEntityHandle>& SelectedEntities,
+		const FVector& Location,
+		bool bCanInterrupt,
+		ERTSMoveNavigationScale NavigationScale);
+	ERTSMoveNavigationScale ResolveNavigationScale(
+		const TArray<FEntityHandle>& Entities,
+		ERTSMoveNavigationScale RequestedScale) const;
+	bool IssueAttackTarget(const TArray<FEntityHandle>& SelectedEntities, FEntityHandle TargetHandle);
 };

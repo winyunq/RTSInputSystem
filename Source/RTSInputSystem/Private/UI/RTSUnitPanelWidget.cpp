@@ -5,6 +5,7 @@
 #include "UI/RTSUnitIconWidget.h"
 #include "RTSInputPanelSettings.h"
 #include "RTSSelectionSubsystem.h"
+#include "Engine/World.h"
 #include "Components/PanelWidget.h"
 #include "Components/Image.h"
 #include "Components/TextBlock.h"
@@ -15,7 +16,10 @@
 #include "Components/HorizontalBox.h"
 #include "Components/HorizontalBoxSlot.h"
 #include "Components/OverlaySlot.h"
+#include "Components/Overlay.h"
+#include "Components/ScaleBox.h"
 #include "Components/SizeBox.h"
+#include "Components/SizeBoxSlot.h"
 #include "Components/Spacer.h"
 #include "Components/UniformGridPanel.h"
 #include "Components/UniformGridSlot.h"
@@ -23,7 +27,6 @@
 #include "Components/VerticalBoxSlot.h"
 #include "Components/GridPanel.h"
 #include "Components/GridSlot.h"
-#include "Components/WrapBox.h"
 #include "Blueprint/WidgetTree.h"
 #include "Blueprint/WidgetBlueprintLibrary.h"
 #include "Engine/LocalPlayer.h"
@@ -52,26 +55,39 @@ void URTSUnitPanelWidget::ApplySelectionPanelLayoutSettings()
 	FMargin PanelContentPadding(16.0f, 4.0f, 16.0f, 4.0f);
 	if (const URTSInputPanelSettings* Settings = GetDefault<URTSInputPanelSettings>())
 	{
-		MaxRows = FMath::Max(1, Settings->SelectionGridRows);
-		MaxColumns = FMath::Max(1, Settings->SelectionGridColumns);
+		MaxRows = FMath::Max(3, Settings->SelectionGridRows);
+		MaxColumns = FMath::Max(8, Settings->SelectionGridColumns);
 		IconSlotSize = FMath::Max(1, Settings->SelectionIconSize);
-		PanelHeaderHeight = FMath::Max(0.0f, Settings->SelectionPanelHeaderHeight);
+		PanelHeaderHeight = FMath::Max(Settings->SelectionPanelHeaderHeight,
+			Settings->FormationListSlotHeight + Settings->FormationListSlotGap);
 		PanelContentPadding = Settings->SelectionPanelContentPadding;
 	}
+
+	// Reuse the command card's complete button footprint, including its border.
+	const UClass* GridClass = LoadClass<URTSCommanderGridWidget>(nullptr,
+		TEXT("/Game/UI/HeadUpDisplay/ControlGird/ControlGrid.ControlGrid_C"));
+	const URTSCommanderGridWidget* GridDefaults = GridClass
+		? GridClass->GetDefaultObject<URTSCommanderGridWidget>()
+		: GetDefault<URTSCommanderGridWidget>();
+	SelectionButtonSize = GridDefaults->GetButtonSize();
+	SelectionSlotPadding = GridDefaults->GetSlotPadding();
+	const FVector2D CellSize = GetSelectionCellSize();
 
 	if (UnitPanelFrame)
 	{
 		UnitPanelFrame->SetPadding(PanelContentPadding);
 	}
 
-	if (IconContainer)
+	if (UnitPanelRouteBounds)
 	{
-		if (UOverlaySlot* OverlaySlot = Cast<UOverlaySlot>(IconContainer->Slot))
-		{
-			OverlaySlot->SetHorizontalAlignment(HAlign_Center);
-			OverlaySlot->SetVerticalAlignment(VAlign_Center);
-			OverlaySlot->SetPadding(PanelContentPadding);
-		}
+		UnitPanelRouteBounds->SetWidthOverride(MaxColumns * CellSize.X);
+		UnitPanelRouteBounds->SetHeightOverride(MaxRows * CellSize.Y);
+		UnitPanelRouteBounds->SetClipping(EWidgetClipping::ClipToBounds);
+	}
+	if (UnitPanelHeaderBounds)
+	{
+		UnitPanelHeaderBounds->SetWidthOverride(MaxColumns * CellSize.X);
+		UnitPanelHeaderBounds->SetHeightOverride(PanelHeaderHeight);
 	}
 
 	ApplyFixedPanelSlotLayout();
@@ -80,223 +96,110 @@ void URTSUnitPanelWidget::ApplySelectionPanelLayoutSettings()
 
 void URTSUnitPanelWidget::ApplyFixedPanelSlotLayout()
 {
-	auto SetFillSlot = [](UWidget* Widget)
+	const FVector2D Cell = GetSelectionCellSize();
+	const float Width = MaxColumns * Cell.X;
+	const float MiddleHeight = 2.0f * Cell.Y;
+	const float CaptionHeight = (MaxRows * Cell.Y - MiddleHeight) * 0.5f;
+	auto Box = [this](const TCHAR* Name, float X, float Y)
 	{
-		if (!Widget || !Widget->Slot)
+		if (USizeBox* Size = Cast<USizeBox>(FindDescendantWidgetByName(this, Name)))
 		{
-			return;
-		}
-
-		if (UHorizontalBoxSlot* HorizontalSlot = Cast<UHorizontalBoxSlot>(Widget->Slot))
-		{
-			FSlateChildSize FillSize;
-			FillSize.SizeRule = ESlateSizeRule::Fill;
-			FillSize.Value = 1.0f;
-			HorizontalSlot->SetSize(FillSize);
-			HorizontalSlot->SetHorizontalAlignment(HAlign_Fill);
-			HorizontalSlot->SetVerticalAlignment(VAlign_Fill);
-		}
-		else if (UVerticalBoxSlot* VerticalSlot = Cast<UVerticalBoxSlot>(Widget->Slot))
-		{
-			FSlateChildSize FillSize;
-			FillSize.SizeRule = ESlateSizeRule::Fill;
-			FillSize.Value = 1.0f;
-			VerticalSlot->SetSize(FillSize);
-			VerticalSlot->SetHorizontalAlignment(HAlign_Fill);
-			VerticalSlot->SetVerticalAlignment(VAlign_Fill);
-		}
-		else if (UOverlaySlot* OverlaySlot = Cast<UOverlaySlot>(Widget->Slot))
-		{
-			OverlaySlot->SetHorizontalAlignment(HAlign_Fill);
-			OverlaySlot->SetVerticalAlignment(VAlign_Fill);
-		}
-		else if (UBorderSlot* BorderSlot = Cast<UBorderSlot>(Widget->Slot))
-		{
-			BorderSlot->SetHorizontalAlignment(HAlign_Fill);
-			BorderSlot->SetVerticalAlignment(VAlign_Fill);
+			Size->SetWidthOverride(X); Size->SetHeightOverride(Y);
+			Size->SetClipping(EWidgetClipping::ClipToBounds);
+			if (UVerticalBoxSlot* LayoutSlot = Cast<UVerticalBoxSlot>(Size->Slot))
+			{ LayoutSlot->SetSize(FSlateChildSize(ESlateSizeRule::Automatic)); LayoutSlot->SetPadding(FMargin(0)); }
+			if (UHorizontalBoxSlot* LayoutSlot = Cast<UHorizontalBoxSlot>(Size->Slot))
+			{ LayoutSlot->SetSize(FSlateChildSize(ESlateSizeRule::Automatic)); LayoutSlot->SetPadding(FMargin(0)); }
 		}
 	};
-
-	auto SetAutoCenterSlot = [](UWidget* Widget)
+	Box(TEXT("UnitTitleBounds"), Width, CaptionHeight);
+	Box(TEXT("UnitClassificationBounds"), Width, CaptionHeight);
+	Box(TEXT("UnitMiddleBounds"), Width, MiddleHeight);
+	Box(TEXT("UnitIdentityBounds"), 2 * Cell.X, MiddleHeight);
+	Box(TEXT("UnitEquipmentBounds"), Width - 2 * Cell.X, MiddleHeight);
+	Box(TEXT("WeaponCardBounds"), (Width - 2 * Cell.X) * 0.5f, MiddleHeight);
+	Box(TEXT("ArmorCardBounds"), (Width - 2 * Cell.X) * 0.5f, MiddleHeight);
+	Box(TEXT("ActiveProductionBounds0"), 3 * Cell.X, Cell.Y);
+	Box(TEXT("ActiveProductionBounds1"), 3 * Cell.X, Cell.Y);
+	Box(TEXT("ActiveIconHost0"), SelectionButtonSize.X, SelectionButtonSize.Y);
+	Box(TEXT("ActiveIconHost1"), SelectionButtonSize.X, SelectionButtonSize.Y);
+	// Portrait and vitals share one vertical column inside the fixed two-cell identity area.
+	const float PortraitWidth = FMath::Min(2.0f * IconSlotSize, 2 * Cell.X - SelectionSlotPadding.GetTotalSpaceAlong<Orient_Horizontal>());
+	if (UWidget* Identity = FindDescendantWidgetByName(this, TEXT("UnitIdentityContent")))
+		if (USizeBoxSlot* IdentitySlot = Cast<USizeBoxSlot>(Identity->Slot))
+		{ IdentitySlot->SetPadding(FMargin(0)); IdentitySlot->SetHorizontalAlignment(HAlign_Center); IdentitySlot->SetVerticalAlignment(VAlign_Fill); }
+	if (USizeBox* Portrait = Cast<USizeBox>(FindDescendantWidgetByName(this, TEXT("UnitIconContainer"))))
 	{
-		if (!Widget || !Widget->Slot)
-		{
-			return;
-		}
-
-		if (UHorizontalBoxSlot* HorizontalSlot = Cast<UHorizontalBoxSlot>(Widget->Slot))
-		{
-			FSlateChildSize AutoSize;
-			AutoSize.SizeRule = ESlateSizeRule::Automatic;
-			AutoSize.Value = 1.0f;
-			HorizontalSlot->SetSize(AutoSize);
-			HorizontalSlot->SetHorizontalAlignment(HAlign_Center);
-			HorizontalSlot->SetVerticalAlignment(VAlign_Center);
-		}
-		else if (UVerticalBoxSlot* VerticalSlot = Cast<UVerticalBoxSlot>(Widget->Slot))
-		{
-			FSlateChildSize AutoSize;
-			AutoSize.SizeRule = ESlateSizeRule::Automatic;
-			AutoSize.Value = 1.0f;
-			VerticalSlot->SetSize(AutoSize);
-			VerticalSlot->SetHorizontalAlignment(HAlign_Center);
-			VerticalSlot->SetVerticalAlignment(VAlign_Center);
-		}
-		else if (UOverlaySlot* OverlaySlot = Cast<UOverlaySlot>(Widget->Slot))
-		{
-			OverlaySlot->SetHorizontalAlignment(HAlign_Center);
-			OverlaySlot->SetVerticalAlignment(VAlign_Center);
-		}
-		else if (UBorderSlot* BorderSlot = Cast<UBorderSlot>(Widget->Slot))
-		{
-			BorderSlot->SetHorizontalAlignment(HAlign_Center);
-			BorderSlot->SetVerticalAlignment(VAlign_Center);
-		}
-	};
-
-	auto SetAutoFillWidthCenterSlot = [](UWidget* Widget)
-	{
-		if (!Widget || !Widget->Slot)
-		{
-			return;
-		}
-
-		if (UVerticalBoxSlot* VerticalSlot = Cast<UVerticalBoxSlot>(Widget->Slot))
-		{
-			FSlateChildSize AutoSize;
-			AutoSize.SizeRule = ESlateSizeRule::Automatic;
-			AutoSize.Value = 1.0f;
-			VerticalSlot->SetSize(AutoSize);
-			VerticalSlot->SetHorizontalAlignment(HAlign_Fill);
-			VerticalSlot->SetVerticalAlignment(VAlign_Center);
-		}
-	};
-
-	auto SetHorizontalAutoSlot = [](UWidget* Widget, EHorizontalAlignment HorizontalAlignment)
-	{
-		if (!Widget || !Widget->Slot)
-		{
-			return;
-		}
-
-		if (UHorizontalBoxSlot* HorizontalSlot = Cast<UHorizontalBoxSlot>(Widget->Slot))
-		{
-			FSlateChildSize AutoSize;
-			AutoSize.SizeRule = ESlateSizeRule::Automatic;
-			AutoSize.Value = 1.0f;
-			HorizontalSlot->SetSize(AutoSize);
-			HorizontalSlot->SetHorizontalAlignment(HorizontalAlignment);
-			HorizontalSlot->SetVerticalAlignment(VAlign_Center);
-		}
-	};
-
-	auto SetHorizontalFillSlot = [](UWidget* Widget)
-	{
-		if (!Widget || !Widget->Slot)
-		{
-			return;
-		}
-
-		if (UHorizontalBoxSlot* HorizontalSlot = Cast<UHorizontalBoxSlot>(Widget->Slot))
-		{
-			FSlateChildSize FillSize;
-			FillSize.SizeRule = ESlateSizeRule::Fill;
-			FillSize.Value = 1.0f;
-			HorizontalSlot->SetSize(FillSize);
-			HorizontalSlot->SetHorizontalAlignment(HAlign_Fill);
-			HorizontalSlot->SetVerticalAlignment(VAlign_Fill);
-		}
-	};
-
-	auto SetAutoLeftCenterSlot = [](UWidget* Widget)
-	{
-		if (!Widget || !Widget->Slot)
-		{
-			return;
-		}
-
-		if (UVerticalBoxSlot* VerticalSlot = Cast<UVerticalBoxSlot>(Widget->Slot))
-		{
-			FSlateChildSize AutoSize;
-			AutoSize.SizeRule = ESlateSizeRule::Automatic;
-			AutoSize.Value = 1.0f;
-			VerticalSlot->SetSize(AutoSize);
-			VerticalSlot->SetHorizontalAlignment(HAlign_Left);
-			VerticalSlot->SetVerticalAlignment(VAlign_Center);
-		}
-	};
-
-	SetFillSlot(FindDescendantWidgetByName(Cast<UWidget>(this), TEXT("LeftArea_Overlay")));
-	SetFillSlot(UnitPanelFrame);
-	SetFillSlot(FindDescendantWidgetByName(Cast<UWidget>(this), TEXT("UnitPanelContentRoot")));
-	SetFillSlot(FindDescendantWidgetByName(Cast<UWidget>(this), TEXT("UnitPanelBody")));
-	SetFillSlot(UnitRosterPane);
-	SetFillSlot(IconContainer);
-	SetFillSlot(UnitDetailPane);
-
-	SetAutoLeftCenterSlot(FindDescendantWidgetByName(Cast<UWidget>(this), TEXT("UnitFormationList")));
-	SetFillSlot(FindDescendantWidgetByName(Cast<UWidget>(this), TEXT("SingleDetailTopSpacer")));
-	SetFillSlot(FindDescendantWidgetByName(Cast<UWidget>(this), TEXT("SingleDetailBottomSpacer")));
-
-	if (UBorder* UnitPanelFrameBorder = Cast<UBorder>(UnitPanelFrame))
-	{
-		UnitPanelFrameBorder->SetBrushColor(FLinearColor(0.006f, 0.018f, 0.028f, 0.98f));
-		UnitPanelFrameBorder->SetPadding(FMargin(8.0f));
+		Portrait->SetWidthOverride(PortraitWidth);
+		Portrait->ClearHeightOverride();
+		if (UVerticalBoxSlot* PortraitSlot = Cast<UVerticalBoxSlot>(Portrait->Slot))
+		{ PortraitSlot->SetSize(FSlateChildSize(ESlateSizeRule::Fill)); PortraitSlot->SetPadding(FMargin(0)); }
 	}
-
-	if (UBorder* UnitRosterPaneBorder = Cast<UBorder>(UnitRosterPane))
+	if (UScaleBox* PortraitScale = Cast<UScaleBox>(FindDescendantWidgetByName(this, TEXT("UnitPortraitScale"))))
+		PortraitScale->SetStretch(EStretch::ScaleToFit);
+	if (UPanelWidget* Vitals = Cast<UPanelWidget>(FindDescendantWidgetByName(this, TEXT("InfoVerticalBox"))))
 	{
-		UnitRosterPaneBorder->SetBrushColor(FLinearColor(0.012f, 0.036f, 0.052f, 0.97f));
-		UnitRosterPaneBorder->SetPadding(FMargin(6.0f));
+		if (UVerticalBoxSlot* VitalsSlot = Cast<UVerticalBoxSlot>(Vitals->Slot))
+		{ VitalsSlot->SetSize(FSlateChildSize(ESlateSizeRule::Automatic)); VitalsSlot->SetPadding(FMargin(0, 4, 0, 0)); }
+		for (UWidget* Vital : Vitals->GetAllChildren())
+		{
+			if (UVerticalBoxSlot* VitalSlot = Cast<UVerticalBoxSlot>(Vital->Slot))
+			{ VitalSlot->SetSize(FSlateChildSize(ESlateSizeRule::Automatic)); VitalSlot->SetPadding(FMargin(0)); VitalSlot->SetHorizontalAlignment(HAlign_Fill); }
+			if (UTextBlock* Text = Cast<UTextBlock>(Vital))
+			{
+				Text->SetJustification(ETextJustify::Center);
+				Text->SetAutoWrapText(false);
+				FSlateFontInfo Font = Text->GetFont(); Font.Size = Vital->GetFName() == TEXT("HealthValueText") ? 18 : 14; Text->SetFont(Font);
+			}
+			if (UProgressBar* Bar = Cast<UProgressBar>(Vital))
+			{
+				FProgressBarStyle Style = Bar->GetWidgetStyle();
+				const FVector2D BarSize(PortraitWidth, Vital->GetFName() == TEXT("HealthBar") ? 12 : 6);
+				Style.BackgroundImage.ImageSize = Style.FillImage.ImageSize = Style.MarqueeImage.ImageSize = BarSize;
+				Style.BackgroundImage.TintColor = FSlateColor(FLinearColor(0.07f, 0.09f, 0.08f));
+				Bar->SetWidgetStyle(Style);
+			}
+		}
 	}
-
-	if (UBorder* UnitIdentityPaneWidget = Cast<UBorder>(FindDescendantWidgetByName(Cast<UWidget>(this), TEXT("UnitIdentityPane"))))
+	for (const TCHAR* Name : {TEXT("ActiveProductionSlot0"), TEXT("ActiveProductionSlot1"), TEXT("WeaponCard"), TEXT("ArmorCard")})
+		if (UWidget* Content = FindDescendantWidgetByName(this, Name))
+			if (USizeBoxSlot* ContentSlot = Cast<USizeBoxSlot>(Content->Slot))
+			{
+				ContentSlot->SetPadding(FMargin(0));
+				ContentSlot->SetHorizontalAlignment(HAlign_Fill);
+				ContentSlot->SetVerticalAlignment(VAlign_Fill);
+			}
+	for (const TCHAR* Name : {TEXT("WeaponStats"), TEXT("ArmorStats")})
+		if (UWidget* Content = FindDescendantWidgetByName(this, Name))
+			if (UVerticalBoxSlot* ContentSlot = Cast<UVerticalBoxSlot>(Content->Slot))
+				ContentSlot->SetSize(FSlateChildSize(ESlateSizeRule::Fill));
+	for (const TCHAR* Name : {TEXT("UnitRosterPane"), TEXT("WeaponArmorPanel")})
+		if (UWidget* Content = FindDescendantWidgetByName(this, Name))
+			if (UOverlaySlot* LayoutSlot = Cast<UOverlaySlot>(Content->Slot))
+			{ LayoutSlot->SetHorizontalAlignment(HAlign_Center); LayoutSlot->SetVerticalAlignment(VAlign_Center); }
+	for (int32 Index = 0; Index < 2; ++Index)
 	{
-		SetAutoFillWidthCenterSlot(UnitIdentityPaneWidget);
-		UnitIdentityPaneWidget->SetBrushColor(FLinearColor(0.018f, 0.052f, 0.072f, 0.98f));
-		UnitIdentityPaneWidget->SetPadding(FMargin(18.0f, 14.0f, 18.0f, 14.0f));
+		if (UWidget* Host = FindDescendantWidgetByName(this, *FString::Printf(TEXT("ActiveIconHost%d"), Index)))
+			if (UHorizontalBoxSlot* LayoutSlot = Cast<UHorizontalBoxSlot>(Host->Slot))
+			{ LayoutSlot->SetPadding(SelectionSlotPadding); LayoutSlot->SetVerticalAlignment(VAlign_Center); }
+		if (UWidget* Info = FindDescendantWidgetByName(this, *FString::Printf(TEXT("ActiveInfo%d"), Index)))
+			if (UHorizontalBoxSlot* LayoutSlot = Cast<UHorizontalBoxSlot>(Info->Slot))
+			{ LayoutSlot->SetSize(FSlateChildSize(ESlateSizeRule::Fill)); LayoutSlot->SetPadding(SelectionSlotPadding); }
+		if (UTextBlock* Status = Cast<UTextBlock>(FindDescendantWidgetByName(this, *FString::Printf(TEXT("ActiveStatus%d"), Index))))
+		{ Status->SetAutoWrapText(true); Status->SetWrapTextAt(2 * Cell.X - SelectionSlotPadding.Left - SelectionSlotPadding.Right); }
 	}
-
-	SetFillSlot(FindDescendantWidgetByName(Cast<UWidget>(this), TEXT("UnitIdentityRow")));
-
-	if (USizeBox* UnitIconContainerBox = Cast<USizeBox>(FindDescendantWidgetByName(Cast<UWidget>(this), TEXT("UnitIconContainer"))))
-	{
-		SetHorizontalAutoSlot(UnitIconContainerBox, HAlign_Left);
-		UnitIconContainerBox->SetWidthOverride(IconSlotSize);
-		UnitIconContainerBox->SetHeightOverride(IconSlotSize);
-	}
-
-	if (USpacer* IconToInfoSpacer = Cast<USpacer>(FindDescendantWidgetByName(Cast<UWidget>(this), TEXT("Spacer_IconToInfo"))))
-	{
-		SetHorizontalFillSlot(IconToInfoSpacer);
-		IconToInfoSpacer->SetSize(FVector2D(48.0f, 1.0f));
-	}
-
-	SetHorizontalAutoSlot(FindDescendantWidgetByName(Cast<UWidget>(this), TEXT("InfoVerticalBox")), HAlign_Right);
-
-	if (UTextBlock* NameText = Cast<UTextBlock>(FindDescendantWidgetByName(Cast<UWidget>(this), TEXT("UnitNameText"))))
-	{
-		NameText->SetColorAndOpacity(FSlateColor(FLinearColor(0.78f, 1.0f, 0.91f, 1.0f)));
-		NameText->SetShadowColorAndOpacity(FLinearColor(0.0f, 0.0f, 0.0f, 0.8f));
-		NameText->SetShadowOffset(FVector2D(1.0f, 1.0f));
-	}
-
-	if (UProgressBar* Health = Cast<UProgressBar>(FindDescendantWidgetByName(Cast<UWidget>(this), TEXT("HealthBar"))))
-	{
-		Health->SetFillColorAndOpacity(FLinearColor(0.22f, 1.0f, 0.42f, 1.0f));
-	}
-	if (UProgressBar* Energy = Cast<UProgressBar>(FindDescendantWidgetByName(Cast<UWidget>(this), TEXT("EnergyBar"))))
-	{
-		Energy->SetFillColorAndOpacity(FLinearColor(0.15f, 0.62f, 1.0f, 1.0f));
-	}
-	if (UProgressBar* Shield = Cast<UProgressBar>(FindDescendantWidgetByName(Cast<UWidget>(this), TEXT("ShieldBar"))))
-	{
-		Shield->SetFillColorAndOpacity(FLinearColor(0.62f, 0.82f, 1.0f, 1.0f));
-	}
-	if (UProgressBar* Activity = Cast<UProgressBar>(FindDescendantWidgetByName(Cast<UWidget>(this), TEXT("ActivityBar"))))
-	{
-		Activity->SetFillColorAndOpacity(FLinearColor(1.0f, 0.72f, 0.16f, 1.0f));
-	}
+	for (const TCHAR* Name : {TEXT("UnitNameText"), TEXT("UnitClassificationText")})
+		if (UTextBlock* Text = Cast<UTextBlock>(FindDescendantWidgetByName(this, Name)))
+			Text->SetJustification(ETextJustify::Center);
+	const TPair<const TCHAR*, const TCHAR*> Images[] = {
+		{TEXT("WeaponImage"), TEXT("/Game/UI/HeadUpDisplay/WW2Unified/Commands/T_WW2_Commands_Attack.T_WW2_Commands_Attack")},
+		{TEXT("ArmorImage"), TEXT("/Game/UI/HeadUpDisplay/WW2Unified/Markers/T_WW2_Markers_Armor.T_WW2_Markers_Armor")}};
+	for (const auto& Entry : Images)
+		if (UImage* Image = Cast<UImage>(FindDescendantWidgetByName(this, Entry.Key)))
+		{
+			Image->SetBrushFromTexture(LoadObject<UTexture2D>(nullptr, Entry.Value));
+			Image->SetDesiredSizeOverride(FVector2D(96));
+		}
 }
 
 TSharedRef<SWidget> URTSUnitPanelWidget::RebuildWidget()
@@ -314,66 +217,83 @@ TSharedRef<SWidget> URTSUnitPanelWidget::RebuildWidget()
 
 		URTSFormationListWidget* FormationList = WidgetTree->ConstructWidget<URTSFormationListWidget>(
 			URTSFormationListWidget::StaticClass(), TEXT("UnitFormationList"));
-		ContentRoot->AddChildToVerticalBox(FormationList);
+		UnitPanelHeaderBounds = WidgetTree->ConstructWidget<USizeBox>(
+			USizeBox::StaticClass(), TEXT("UnitPanelHeaderBounds"));
+		UnitPanelHeaderBounds->AddChild(FormationList);
+		ContentRoot->AddChildToVerticalBox(UnitPanelHeaderBounds);
+		UnitPanelRouteBounds = WidgetTree->ConstructWidget<USizeBox>(
+			USizeBox::StaticClass(), TEXT("UnitPanelRouteBounds"));
+		ContentRoot->AddChildToVerticalBox(UnitPanelRouteBounds);
+		UOverlay* Routes = WidgetTree->ConstructWidget<UOverlay>(
+			UOverlay::StaticClass(), TEXT("UnitPanelRoutes"));
+		UnitPanelRouteBounds->AddChild(Routes);
 
-		UHorizontalBox* DetailPane = WidgetTree->ConstructWidget<UHorizontalBox>(
-			UHorizontalBox::StaticClass(), TEXT("UnitDetailPane"));
-		UnitDetailPane = DetailPane;
-		if (UVerticalBoxSlot* DetailSlot = ContentRoot->AddChildToVerticalBox(DetailPane))
+		// Native fallback uses the same named tree and data route as the authored widget.
+		auto Add = [this](UClass* Class, const FName Name, UPanelWidget* Parent)
 		{
-			DetailSlot->SetSize(FSlateChildSize(ESlateSizeRule::Fill));
-			DetailSlot->SetVerticalAlignment(VAlign_Center);
-		}
-
-		USizeBox* DetailIconSize = WidgetTree->ConstructWidget<USizeBox>(
-			USizeBox::StaticClass(), TEXT("UnitIconContainer"));
-		DetailIconSize->SetWidthOverride(IconSlotSize);
-		DetailIconSize->SetHeightOverride(IconSlotSize);
-		UImage* DetailIcon = WidgetTree->ConstructWidget<UImage>(
-			UImage::StaticClass(), TEXT("UnitIconImage"));
-		DetailIconSize->AddChild(DetailIcon);
-		DetailPane->AddChildToHorizontalBox(DetailIconSize);
-
-		UVerticalBox* DetailText = WidgetTree->ConstructWidget<UVerticalBox>(
-			UVerticalBox::StaticClass(), TEXT("InfoVerticalBox"));
-		if (UHorizontalBoxSlot* DetailTextSlot = DetailPane->AddChildToHorizontalBox(DetailText))
-		{
-			DetailTextSlot->SetPadding(FMargin(18.0f, 0.0f, 0.0f, 0.0f));
-			DetailTextSlot->SetSize(FSlateChildSize(ESlateSizeRule::Fill));
-			DetailTextSlot->SetVerticalAlignment(VAlign_Center);
-		}
-
-		auto AddDetailText = [this, DetailText](const FName Name, const FLinearColor Color)
-		{
-			UTextBlock* Text = WidgetTree->ConstructWidget<UTextBlock>(UTextBlock::StaticClass(), Name);
-			Text->SetColorAndOpacity(FSlateColor(Color));
-			DetailText->AddChildToVerticalBox(Text);
-			return Text;
+			UWidget* Widget = WidgetTree->ConstructWidget<UWidget>(Class, Name);
+			if (Parent) Parent->AddChild(Widget);
+			return Widget;
 		};
-		AddDetailText(TEXT("UnitNameText"), FLinearColor(0.78f, 1.0f, 0.91f, 1.0f));
-		AddDetailText(TEXT("UnitRoleText"), FLinearColor(0.72f, 0.78f, 0.82f, 1.0f));
-		AddDetailText(TEXT("UnitTypeText"), FLinearColor(0.48f, 0.62f, 0.72f, 1.0f));
-
-		auto AddDetailBar = [this, DetailText](const FName Name, const FLinearColor Color)
+		auto Column = [&Add](const FName Name, UPanelWidget* Parent)
+		{ return CastChecked<UVerticalBox>(Add(UVerticalBox::StaticClass(), Name, Parent)); };
+		auto Row = [&Add](const FName Name, UPanelWidget* Parent)
+		{ return CastChecked<UHorizontalBox>(Add(UHorizontalBox::StaticClass(), Name, Parent)); };
+		auto Box = [&Add](const FName Name, UPanelWidget* Parent)
+		{ return CastChecked<USizeBox>(Add(USizeBox::StaticClass(), Name, Parent)); };
+		auto Text = [&Add](const FName Name, const TCHAR* Value, UPanelWidget* Parent)
 		{
-			UProgressBar* Bar = WidgetTree->ConstructWidget<UProgressBar>(UProgressBar::StaticClass(), Name);
-			Bar->SetFillColorAndOpacity(Color);
-			DetailText->AddChildToVerticalBox(Bar);
+			UTextBlock* Widget = CastChecked<UTextBlock>(Add(UTextBlock::StaticClass(), Name, Parent));
+			Widget->SetText(FText::FromString(Value));
+			Widget->SetJustification(ETextJustify::Center);
+			FSlateFontInfo Font = Widget->GetFont(); Font.Size = 24; Widget->SetFont(Font);
+			return Widget;
 		};
-		AddDetailBar(TEXT("HealthBar"), FLinearColor(0.18f, 0.9f, 0.32f, 1.0f));
-		AddDetailBar(TEXT("EnergyBar"), FLinearColor(0.15f, 0.55f, 1.0f, 1.0f));
-		AddDetailBar(TEXT("ShieldBar"), FLinearColor(0.55f, 0.78f, 1.0f, 1.0f));
-		AddDetailText(TEXT("ActivityText"), FLinearColor(1.0f, 0.72f, 0.16f, 1.0f));
-		AddDetailBar(TEXT("ActivityBar"), FLinearColor(1.0f, 0.72f, 0.16f, 1.0f));
-
-		UUniformGridPanel* Roster = WidgetTree->ConstructWidget<UUniformGridPanel>(
-			UUniformGridPanel::StaticClass(), TEXT("IconContainer"));
-		UnitRosterPane = Roster;
-		IconContainer = Roster;
-		if (UVerticalBoxSlot* RosterSlot = ContentRoot->AddChildToVerticalBox(Roster))
+		auto Bar = [&Add](const FName Name, UPanelWidget* Parent)
 		{
-			RosterSlot->SetSize(FSlateChildSize(ESlateSizeRule::Fill));
+			UProgressBar* Widget = CastChecked<UProgressBar>(Add(UProgressBar::StaticClass(), Name, Parent));
+			Widget->SetFillColorAndOpacity(FLinearColor(0.22f, 1.0f, 0.42f));
+			return Widget;
+		};
+		UVerticalBox* Single = Column(TEXT("SingleUnitPanel"), Routes);
+		SingleUnitPanel = Single;
+		Text(TEXT("UnitNameText"), TEXT(""), Box(TEXT("UnitTitleBounds"), Single));
+		UHorizontalBox* Middle = Row(TEXT("UnitPanelBody"), Box(TEXT("UnitMiddleBounds"), Single));
+		UVerticalBox* Identity = Column(TEXT("UnitIdentityContent"), Box(TEXT("UnitIdentityBounds"), Middle));
+		USizeBox* Portrait = Box(TEXT("UnitIconContainer"), Identity);
+		UPanelWidget* PortraitScale = CastChecked<UScaleBox>(Add(UScaleBox::StaticClass(), TEXT("UnitPortraitScale"), Portrait));
+		Add(UImage::StaticClass(), TEXT("UnitIconImage"), PortraitScale);
+		UVerticalBox* Stats = Column(TEXT("InfoVerticalBox"), Identity);
+		Bar(TEXT("HealthBar"), Stats); Text(TEXT("HealthValueText"), TEXT(""), Stats);
+		Bar(TEXT("EnergyBar"), Stats); Bar(TEXT("ShieldBar"), Stats);
+		Text(TEXT("ActivityText"), TEXT(""), Stats); Bar(TEXT("ActivityBar"), Stats);
+		UOverlay* Equipment = CastChecked<UOverlay>(Add(UOverlay::StaticClass(), TEXT("UnitEquipmentRoutes"), Box(TEXT("UnitEquipmentBounds"), Middle)));
+		UHorizontalBox* Combat = Row(TEXT("WeaponArmorPanel"), Equipment);
+		WeaponArmorPanel = Combat;
+		for (const FString Prefix : {FString(TEXT("Weapon")), FString(TEXT("Armor"))})
+		{
+			UVerticalBox* Card = Column(*(Prefix + TEXT("Card")), Box(*(Prefix + TEXT("CardBounds")), Combat));
+			Text(*(Prefix + TEXT("Title")), Prefix == TEXT("Weapon") ? TEXT("武器") : TEXT("护甲"), Card);
+			Add(UImage::StaticClass(), *(Prefix + TEXT("Image")), Card);
+			Text(*(Prefix + TEXT("Stats")), TEXT(""), Card);
 		}
+		UVerticalBox* Research = Column(TEXT("UnitRosterPane"), Equipment);
+		UnitRosterPane = Research;
+		UHorizontalBox* ActiveRow = Row(TEXT("ActiveProductionRow"), Research);
+		for (int32 Index = 0; Index < 2; ++Index)
+		{
+			UHorizontalBox* Active = Row(*FString::Printf(TEXT("ActiveProductionSlot%d"), Index),
+				Box(*FString::Printf(TEXT("ActiveProductionBounds%d"), Index), ActiveRow));
+			Box(*FString::Printf(TEXT("ActiveIconHost%d"), Index), Active);
+			UVerticalBox* Info = Column(*FString::Printf(TEXT("ActiveInfo%d"), Index), Active);
+			Text(*FString::Printf(TEXT("ActiveStatus%d"), Index), TEXT("正在研发"), Info);
+			UProgressBar* Progress = Bar(*FString::Printf(TEXT("ActiveProgress%d"), Index), Info);
+			(Index == 0 ? ActiveProgress0 : ActiveProgress1) = Progress;
+		}
+		ActivityQueueContainer = CastChecked<UGridPanel>(Add(UGridPanel::StaticClass(), TEXT("ActivityQueueContainer"), Research));
+		Text(TEXT("UnitClassificationText"), TEXT(""), Box(TEXT("UnitClassificationBounds"), Single));
+		IconContainer = CastChecked<UUniformGridPanel>(Add(UUniformGridPanel::StaticClass(), TEXT("IconContainer"), Routes));
+		SummaryIconContainer = CastChecked<UUniformGridPanel>(Add(UUniformGridPanel::StaticClass(), TEXT("SummaryIconContainer"), Routes));
 
 		UnitIconClass = URTSUnitIconWidget::StaticClass();
 		IconWidgetClass = URTSUnitIconWidget::StaticClass();
@@ -400,11 +320,18 @@ void URTSUnitPanelWidget::ReleaseSlateResources(bool bReleaseChildren)
 	FixedPanelBoundsBox.Reset();
 }
 
+FVector2D URTSUnitPanelWidget::GetSelectionCellSize() const
+{
+	return SelectionButtonSize + FVector2D(
+		SelectionSlotPadding.Left + SelectionSlotPadding.Right,
+		SelectionSlotPadding.Top + SelectionSlotPadding.Bottom);
+}
+
 FVector2D URTSUnitPanelWidget::CalculateFixedPanelSize() const
 {
-	const int32 Rows = FMath::Max(1, MaxRows);
-	const int32 Columns = FMath::Max(1, MaxColumns);
-	const int32 CellSize = FMath::Max(1, IconSlotSize);
+	const int32 Rows = FMath::Max(3, MaxRows);
+	const int32 Columns = FMath::Max(8, MaxColumns);
+	const FVector2D CellSize = GetSelectionCellSize();
 	const float HeaderHeight = FMath::Max(0.0f, PanelHeaderHeight);
 	FMargin PanelContentPadding(16.0f, 4.0f, 16.0f, 4.0f);
 
@@ -413,8 +340,8 @@ FVector2D URTSUnitPanelWidget::CalculateFixedPanelSize() const
 		PanelContentPadding = Settings->SelectionPanelContentPadding;
 	}
 
-	const float Width = static_cast<float>(Columns * CellSize) + PanelContentPadding.Left + PanelContentPadding.Right;
-	const float Height = HeaderHeight + static_cast<float>(Rows * CellSize) + PanelContentPadding.Top + PanelContentPadding.Bottom;
+	const float Width = static_cast<float>(Columns * CellSize.X) + PanelContentPadding.Left + PanelContentPadding.Right;
+	const float Height = HeaderHeight + static_cast<float>(Rows * CellSize.Y) + PanelContentPadding.Top + PanelContentPadding.Bottom;
 	return FVector2D(Width, Height);
 }
 
@@ -430,225 +357,110 @@ void URTSUnitPanelWidget::ApplyFixedPanelBounds()
 	FixedPanelBoundsBox->SetHeightOverride(FixedSize.Y);
 }
 
+void URTSUnitPanelWidget::BuildSelectionGrid(
+	UPanelWidget* Container, TArray<URTSUnitIconWidget*>& Slots, bool bSummary)
+{
+	Slots.Reset();
+	if (!Container || !WidgetTree || !IconWidgetClass
+		|| !IconWidgetClass->IsChildOf(URTSUnitIconWidget::StaticClass())) return;
+	Container->ClearChildren();
+	UGridPanel* Grid = Cast<UGridPanel>(Container);
+	UUniformGridPanel* Uniform = Cast<UUniformGridPanel>(Container);
+	if (!Grid && !Uniform)
+	{
+		UE_LOG(LogTemp, Error, TEXT("RTS selection requires a GridPanel or UniformGridPanel: %s"), *Container->GetName());
+		return;
+	}
+	if (Grid)
+	{
+		Grid->RowFill.Init(1.0f, MaxRows);
+		Grid->ColumnFill.Init(1.0f, MaxColumns);
+	}
+	if (Uniform)
+	{
+		Uniform->SetSlotPadding(SelectionSlotPadding);
+		Uniform->SetMinDesiredSlotWidth(SelectionButtonSize.X);
+		Uniform->SetMinDesiredSlotHeight(SelectionButtonSize.Y);
+	}
+	for (int32 CellIndex = 0; CellIndex < ItemsPerPage; ++CellIndex)
+	{
+		const int32 Row = CellIndex / MaxColumns;
+		const int32 Column = CellIndex % MaxColumns;
+		USizeBox* Cell = WidgetTree->ConstructWidget<USizeBox>();
+		Cell->SetWidthOverride(SelectionButtonSize.X);
+		Cell->SetHeightOverride(SelectionButtonSize.Y);
+		Cell->SetClipping(EWidgetClipping::ClipToBounds);
+		if (Grid)
+		{
+			UGridSlot* CellSlot = Grid->AddChildToGrid(Cell, Row, Column);
+			CellSlot->SetPadding(SelectionSlotPadding);
+			CellSlot->SetHorizontalAlignment(HAlign_Fill);
+			CellSlot->SetVerticalAlignment(VAlign_Fill);
+		}
+		else
+		{
+			UUniformGridSlot* CellSlot = Uniform->AddChildToUniformGrid(Cell, Row, Column);
+			CellSlot->SetHorizontalAlignment(HAlign_Fill);
+			CellSlot->SetVerticalAlignment(VAlign_Fill);
+		}
+		// Odd column counts leave the last cell empty so icon/count pairs never wrap.
+		if (bSummary && Column == MaxColumns - 1 && MaxColumns % 2 != 0) continue;
+		if (bSummary && Column % 2 != 0)
+		{
+			UScaleBox* Scale = WidgetTree->ConstructWidget<UScaleBox>();
+			Scale->SetStretch(EStretch::ScaleToFit);
+			Scale->SetStretchDirection(EStretchDirection::DownOnly);
+			Cell->AddChild(Scale);
+			UTextBlock* Count = WidgetTree->ConstructWidget<UTextBlock>();
+			Count->SetJustification(ETextJustify::Center);
+			Count->SetColorAndOpacity(FSlateColor(FLinearColor(0.82f, 1.0f, 0.72f, 1.0f)));
+			Count->SetShadowColorAndOpacity(FLinearColor::Black);
+			Count->SetShadowOffset(FVector2D(1.0f, 1.0f));
+			FSlateFontInfo Font = Count->GetFont();
+			Font.Size = FMath::Max(22, IconSlotSize / 2);
+			Count->SetFont(Font);
+			Count->SetVisibility(ESlateVisibility::Hidden);
+			Scale->AddChild(Count);
+			CountSlots.Add(Count);
+		}
+		else
+		{
+			URTSUnitIconWidget* Icon = CreateWidget<URTSUnitIconWidget>(this, IconWidgetClass);
+			Cell->AddChild(Icon);
+			Icon->SetVisibility(ESlateVisibility::Hidden);
+			Slots.Add(Icon);
+		}
+	}
+}
+
 void URTSUnitPanelWidget::NativeConstruct()
 {
 	Super::NativeConstruct();
 
 	ApplySelectionPanelLayoutSettings();
 
-	// Template Extraction Logic
-	if (IconContainer)
+	// Designer children provide presentation templates, never grid dimensions.
+	if (IconContainer && !IconWidgetClass)
 	{
-		int32 ExplicitRows = MaxRows;
-		int32 ExplicitColumns = MaxColumns;
-		bool bHasExplicitRows = false;
-		bool bHasExplicitColumns = false;
-
-		// UnitPanel capacity is a panel-level contract. Designer children are templates,
-		// so child count must not resize the fixed UnitPanel shell.
-		if (UGridPanel* GridPanel = Cast<UGridPanel>(IconContainer))
+		for (UWidget* Child : IconContainer->GetAllChildren())
 		{
-			if (GridPanel->RowFill.Num() > 0)
+			if (URTSUnitIconWidget* Template = Cast<URTSUnitIconWidget>(Child))
 			{
-				ExplicitRows = GridPanel->RowFill.Num();
-				bHasExplicitRows = true;
-			}
-			if (GridPanel->ColumnFill.Num() > 0)
-			{
-				ExplicitColumns = GridPanel->ColumnFill.Num();
-				bHasExplicitColumns = true;
-			}
-		}
-
-		// Scan children only for class templates. Their positions and count do not define capacity.
-		const int32 ChildrenCount = IconContainer->GetChildrenCount();
-		for (int32 i = 0; i < ChildrenCount; ++i)
-		{
-			UWidget* Child = IconContainer->GetChildAt(i);
-			if (!Child) continue;
-
-			if (!IconWidgetClass)
-			{
-				if (URTSUnitIconWidget* IconWidget = Cast<URTSUnitIconWidget>(Child))
-				{
-					IconWidgetClass = IconWidget->GetClass();
-				}
-			}
-			if (!CountWidgetClass)
-			{
-				if (UTextBlock* TextBlock = Cast<UTextBlock>(Child))
-				{
-					CountWidgetClass = TextBlock->GetClass();
-				}
-			}
-		}
-
-		if (bHasExplicitRows || bHasExplicitColumns)
-		{
-			MaxRows = FMath::Max(1, ExplicitRows);
-			MaxColumns = FMath::Max(1, ExplicitColumns);
-			UE_LOG(LogTemp, Log, TEXT("RTSUnitPanelWidget: Using explicit grid capacity: %d Rows x %d Cols"),
-				MaxRows, MaxColumns);
-		}
-		else
-		{
-			UE_LOG(LogTemp, Log, TEXT("RTSUnitPanelWidget: Using configured grid capacity: %d Rows x %d Cols"),
-				MaxRows, MaxColumns);
-		}
-
-		ApplyFixedPanelBounds();
-
-		// Clear templates from view so we can populate fresh data
-		IconContainer->ClearChildren();
-	}
-
-	if (!IconWidgetClass && UnitIconClass)
-	{
-		IconWidgetClass = UnitIconClass;
-	}
-
-	if (!IconWidgetClass)
-	{
-		IconWidgetClass = LoadClass<URTSUnitIconWidget>(
-			nullptr,
-			TEXT("/Game/UI/HeadUpDisplay/UnitDetails/Unit.Unit_C")
-		);
-	}
-	if (!IconContainer)
-	{
-		UE_LOG(LogTemp, Warning, TEXT("RTSUnitPanelWidget: IconContainer is not bound. UnitPanel shell can remain visible, but list/summary content cannot be built."));
-	}
-	else if (IconWidgetClass)
-	{
-		UE_LOG(LogTemp, Log, TEXT("RTSUnitPanelWidget: IconWidgetClass resolved to %s"), *IconWidgetClass->GetName());
-
-		// --- Initialize Widget Pool ---
-		// Calculate Total Slots based on Grid Dimensions
-		ItemsPerPage = MaxRows * MaxColumns;
-		UE_LOG(LogTemp, Log, TEXT("RTSUnitPanelWidget: Initializing Pool for %d x %d = %d slots."), MaxRows, MaxColumns, ItemsPerPage);
-
-		IconSlots.Reset();
-		ProgressButtonSlots.Reset();
-		CountSlots.Reset();
-
-		// Support for various container types
-		UUniformGridPanel* UniformGrid = Cast<UUniformGridPanel>(IconContainer);
-		UGridPanel* GenericGrid = Cast<UGridPanel>(IconContainer);
-		UWrapBox* WrapBox = Cast<UWrapBox>(IconContainer);
-
-		if (UniformGrid)
-		{
-			UniformGrid->SetSlotPadding(FMargin(0.0f));
-			UniformGrid->SetMinDesiredSlotWidth(IconSlotSize);
-			UniformGrid->SetMinDesiredSlotHeight(IconSlotSize);
-		}
-
-		// Helper for layout
-		int32 CurrentCol = 0;
-		int32 CurrentRow = 0;
-		auto AdvanceCursor = [&]() {
-			CurrentCol++;
-			if (CurrentCol >= MaxColumns)
-			{
-				CurrentCol = 0;
-				CurrentRow++;
-			}
-		};
-
-		// Create fixed grid pools. Summary mode uses two cells per group: icon cell, then count cell.
-
-		for (int32 i = 0; i < ItemsPerPage; i++)
-		{
-			if (IconWidgetClass->IsChildOf(URTSUnitIconWidget::StaticClass()))
-			{
-				URTSUnitIconWidget* NewWidget = CreateWidget<URTSUnitIconWidget>(this, IconWidgetClass);
-				if (NewWidget)
-				{
-					// Add to Container
-					if (UniformGrid)
-					{
-						UUniformGridSlot* NewSlot = UniformGrid->AddChildToUniformGrid(NewWidget, CurrentRow, CurrentCol);
-						if (NewSlot) { NewSlot->SetHorizontalAlignment(HAlign_Fill); NewSlot->SetVerticalAlignment(VAlign_Fill); }
-						AdvanceCursor();
-					}
-					else if (GenericGrid)
-					{
-						UGridSlot* NewSlot = GenericGrid->AddChildToGrid(NewWidget, CurrentRow, CurrentCol);
-						if (NewSlot) { NewSlot->SetHorizontalAlignment(HAlign_Fill); NewSlot->SetVerticalAlignment(VAlign_Fill); }
-						AdvanceCursor();
-					}
-					else if (WrapBox)
-					{
-						WrapBox->AddChildToWrapBox(NewWidget);
-					}
-					else
-					{
-						IconContainer->AddChild(NewWidget);
-					}
-
-					// Hidden keeps the fixed grid structure while removing empty slot visuals.
-					NewWidget->SetVisibility(ESlateVisibility::Hidden);
-					
-					IconSlots.Add(NewWidget);
-				}
-			}
-			else
-			{
-				UE_LOG(LogTemp, Warning, TEXT("RTSUnitPanelWidget: IconWidgetClass %s is not a URTSUnitIconWidget subclass."), *IconWidgetClass->GetName());
+				IconWidgetClass = Template->GetClass();
 				break;
 			}
 		}
-
-		for (int32 i = 0; i < ItemsPerPage; ++i)
-		{
-			UTextBlock* NewCount = WidgetTree
-				? WidgetTree->ConstructWidget<UTextBlock>(
-					UTextBlock::StaticClass(),
-					FName(*FString::Printf(TEXT("SelectionSummaryCount_%02d"), i)))
-				: NewObject<UTextBlock>(this);
-
-			if (!NewCount)
-			{
-				continue;
-			}
-
-			NewCount->SetVisibility(ESlateVisibility::Collapsed);
-			NewCount->SetJustification(ETextJustify::Center);
-			NewCount->SetColorAndOpacity(FSlateColor(FLinearColor(0.82f, 1.0f, 0.72f, 1.0f)));
-			NewCount->SetShadowColorAndOpacity(FLinearColor::Black);
-			NewCount->SetShadowOffset(FVector2D(1.0f, 1.0f));
-
-			FSlateFontInfo FontInfo = NewCount->GetFont();
-			FontInfo.Size = FMath::Max(22, IconSlotSize / 2);
-			NewCount->SetFont(FontInfo);
-
-			if (UniformGrid)
-			{
-				UUniformGridSlot* CountSlot = UniformGrid->AddChildToUniformGrid(NewCount, 0, 0);
-				if (CountSlot) { CountSlot->SetHorizontalAlignment(HAlign_Fill); CountSlot->SetVerticalAlignment(VAlign_Fill); }
-			}
-			else if (GenericGrid)
-			{
-				UGridSlot* CountSlot = GenericGrid->AddChildToGrid(NewCount, 0, 0);
-				if (CountSlot) { CountSlot->SetHorizontalAlignment(HAlign_Fill); CountSlot->SetVerticalAlignment(VAlign_Fill); }
-			}
-			else if (WrapBox)
-			{
-				WrapBox->AddChildToWrapBox(NewCount);
-			}
-			else if (IconContainer)
-			{
-				IconContainer->AddChild(NewCount);
-			}
-
-			CountSlots.Add(NewCount);
-		}
-		UE_LOG(LogTemp, Log, TEXT("RTSUnitPanelWidget: Initialized Pool with %d widgets."), IconSlots.Num());
 	}
-	else
-	{
-		UE_LOG(LogTemp, Warning, TEXT("RTSUnitPanelWidget: IconWidgetClass is NULL! Grid will be empty. Set it in Details or add a template child."));
-	}
+	if (!IconWidgetClass) IconWidgetClass = UnitIconClass;
+	if (!IconWidgetClass)
+		IconWidgetClass = LoadClass<URTSUnitIconWidget>(nullptr,
+			TEXT("/Game/UI/HeadUpDisplay/UnitDetails/Unit.Unit_C"));
+
+	ItemsPerPage = MaxRows * MaxColumns;
+	HideGridSlots();
+	CountSlots.Reset();
+	BuildSelectionGrid(IconContainer, IconSlots, false);
+	BuildSelectionGrid(SummaryIconContainer, SummaryIconSlots, true);
 
 	// The panel shell itself must not remain as an empty white rectangle.
 	ShowEmptyContent();
@@ -708,104 +520,34 @@ void URTSUnitPanelWidget::OnSelectionUpdated(const FRTSSelectionView& View)
 	RefreshGrid(View);
 }
 
-void URTSUnitPanelWidget::OnCommandProgressChanged(
-	AActor* ProgressProvider)
+void URTSUnitPanelWidget::OnCommandProgressChanged(AActor* ProgressProvider)
 {
-	if (!ProgressProvider
-		|| DisplayedProgressProvider.Get() != ProgressProvider
-		|| !ProgressProvider->Implements<URTSCommandProgressProvider>())
-	{
-		return;
-	}
-
-	TArray<FRTSTimedCommandInstance> ProgressItems;
+	if (!ProgressProvider || DisplayedProgressProvider.Get() != ProgressProvider
+		|| !ProgressProvider->Implements<URTSCommandProgressProvider>()) return;
 	IRTSCommandProgressProvider::Execute_GetCommandProgressItems(
-		ProgressProvider,
-		ProgressItems);
-	const bool bHasProgressItems = !ProgressItems.IsEmpty();
-	const FRTSTimedCommandInstance* ActiveItem =
-		ProgressItems.FindByPredicate(
-			[](const FRTSTimedCommandInstance& Item)
-			{
-				return Item.State != ERTSTimedCommandState::Queued;
-			});
-
-	// Update only the activity fields. Health, portrait and the rest of the single
-	// selection view remain untouched, so an activity change never rebuilds the
-	// whole panel.
-	DisplayedSingleUnitData.ActorPtr = ProgressProvider;
-	DisplayedSingleUnitData.CommandProgressItems = ProgressItems;
-	DisplayedSingleUnitData.bHasActivity = ActiveItem != nullptr;
-	DisplayedSingleUnitData.ActivityLabel =
-		ActiveItem
-			? (ActiveItem->CommandButton
-				? ActiveItem->CommandButton->DisplayName
-				: (!ActiveItem->DisplayName.IsEmpty()
-					? ActiveItem->DisplayName
-					: FText::FromName(ActiveItem->PayloadId)))
-			: FText::GetEmpty();
-	DisplayedSingleUnitData.ActivityProgress =
-		ActiveItem ? ActiveItem->GetProgress01() : 0.0f;
-	DisplayedSingleUnitData.ActivityRemainingSeconds =
-		ActiveItem ? ActiveItem->GetRemainingSeconds() : 0.0f;
-	DisplayedSingleUnitData.ActivityQueueCount = ProgressItems.Num();
+		ProgressProvider, DisplayedSingleUnitData.CommandProgressItems);
+	const FRTSTimedCommandInstance* Active = DisplayedSingleUnitData.CommandProgressItems.FindByPredicate(
+		[](const FRTSTimedCommandInstance& Item) { return Item.State != ERTSTimedCommandState::Queued; });
+	DisplayedSingleUnitData.bHasActivity = Active != nullptr;
+	DisplayedSingleUnitData.ActivityLabel = Active && Active->CommandButton ? Active->CommandButton->DisplayName : FText::GetEmpty();
+	DisplayedSingleUnitData.ActivityProgress = Active ? Active->GetProgress01() : 0.0f;
+	DisplayedSingleUnitData.ActivityRemainingSeconds = Active ? Active->GetRemainingSeconds() : 0.0f;
+	DisplayedSingleUnitData.ActivityQueueCount = DisplayedSingleUnitData.CommandProgressItems.Num();
 	RefreshSingleUnitActivity(DisplayedSingleUnitData);
-
-	if (bHasProgressItems)
-	{
-		FRTSUnitData ProgressData;
-		ProgressData.ActorPtr = ProgressProvider;
-		ProgressData.CommandProgressItems = MoveTemp(ProgressItems);
-		ShowCommandProgressItems(ProgressData);
-	}
-	else
-	{
-		HideGridSlots();
-	}
-
-	if (IconContainer)
-	{
-		IconContainer->SetVisibility(
-			bHasProgressItems
-				? ESlateVisibility::Visible
-				: ESlateVisibility::Collapsed);
-	}
-	if (UnitRosterPane)
-	{
-		UnitRosterPane->SetVisibility(
-			bHasProgressItems
-				? ESlateVisibility::SelfHitTestInvisible
-				: ESlateVisibility::Collapsed);
-	}
-	if (UnitPanelBodyGap)
-	{
-		UnitPanelBodyGap->SetVisibility(
-			bHasProgressItems
-				? ESlateVisibility::HitTestInvisible
-				: ESlateVisibility::Collapsed);
-	}
+	ShowCommandProgressItems(DisplayedSingleUnitData);
 }
 
 void URTSUnitPanelWidget::OnControlGroupsUpdated(const FRTSControlGroupsView& View)
 {
-	int32 AssignedGroupCount = 0;
-	for (const FRTSControlGroupView& Group : View.Groups)
-	{
-		AssignedGroupCount += Group.bAssigned ? 1 : 0;
-	}
-
-	const URTSInputPanelSettings* Settings = GetDefault<URTSInputPanelSettings>();
-	const int32 Columns = Settings ? FMath::Max(1, Settings->SelectionGridColumns) : 8;
-	const float CardHeight = Settings ? FMath::Max(1, Settings->FormationListSlotHeight) : 64.0f;
-	const float RowGap = Settings ? FMath::Max(0.0f, Settings->FormationListSlotGap) : 4.0f;
-	const float MinimumVisibleHeaderHeight = Settings ? FMath::Max(0.0f, Settings->SelectionPanelHeaderHeight) : 68.0f;
-	const int32 VisibleRows = AssignedGroupCount > 0 ? FMath::DivideAndRoundUp(AssignedGroupCount, Columns) : 0;
-
-	PanelHeaderHeight = VisibleRows > 0
-		? FMath::Max(MinimumVisibleHeaderHeight, VisibleRows * (CardHeight + RowGap))
-		: 0.0f;
-	ApplyFixedPanelBounds();
-	InvalidateLayoutAndVolatility();
+	// Control-group visibility does not change the reserved header or route size.
+	ApplySelectionPanelLayoutSettings();
+	bHasAssignedControlGroups = View.Groups.ContainsByPredicate(
+		[](const FRTSControlGroupView& Group) { return Group.bAssigned && Group.UnitCount > 0; });
+	const bool bHasContent = (SingleUnitPanel && SingleUnitPanel->GetVisibility() != ESlateVisibility::Collapsed)
+		|| (IconContainer && IconContainer->GetVisibility() != ESlateVisibility::Collapsed)
+		|| (SummaryIconContainer && SummaryIconContainer->GetVisibility() != ESlateVisibility::Collapsed);
+	SetVisibility(bHasAssignedControlGroups || bHasContent
+		? ESlateVisibility::SelfHitTestInvisible : ESlateVisibility::Hidden);
 }
 
 void URTSUnitPanelWidget::RefreshGrid(const FRTSSelectionView& View)
@@ -841,405 +583,159 @@ void URTSUnitPanelWidget::ShowEmptyContent()
 {
 	HideGridSlots();
 	DisplayedSingleUnitData = FRTSUnitData();
+	SetContentRoute(ERTSSelectionMode::Empty);
+	// Hide all visuals while retaining the same allocation in the HUD.
+	SetVisibility(bHasAssignedControlGroups
+		? ESlateVisibility::SelfHitTestInvisible : ESlateVisibility::Hidden);
+}
 
-	if (IconContainer)
+void URTSUnitPanelWidget::SetContentRoute(ERTSSelectionMode Mode)
+{
+	auto SetRoute = [Mode](UWidget* Widget, ERTSSelectionMode Route)
 	{
-		IconContainer->SetVisibility(ESlateVisibility::Hidden);
-	}
-
-	if (UnitRosterPane)
-	{
-		UnitRosterPane->SetVisibility(ESlateVisibility::Hidden);
-	}
-
-	if (UnitPanelBodyGap)
-	{
-		UnitPanelBodyGap->SetVisibility(ESlateVisibility::Hidden);
-	}
-
-	if (UnitDetailPane)
-	{
-		UnitDetailPane->SetVisibility(ESlateVisibility::Hidden);
-	}
-
-	SetVisibility(ESlateVisibility::Collapsed);
+		if (Widget) Widget->SetVisibility(Mode == Route
+			? ESlateVisibility::SelfHitTestInvisible : ESlateVisibility::Collapsed);
+	};
+	SetRoute(SingleUnitPanel, ERTSSelectionMode::Single);
+	SetRoute(IconContainer, ERTSSelectionMode::List);
+	SetRoute(SummaryIconContainer, ERTSSelectionMode::Summary);
 }
 
 void URTSUnitPanelWidget::ShowSingleContent(const FRTSUnitData& Data)
 {
+	HideGridSlots();
 	DisplayedSingleUnitData = Data;
-	const bool bHasProgressItems = !Data.CommandProgressItems.IsEmpty();
-	for (URTSUnitIconWidget* IconSlot : IconSlots)
-	{
-		if (IconSlot)
-		{
-			IconSlot->SetVisibility(ESlateVisibility::Hidden);
-		}
-	}
-	for (UTextBlock* CountSlot : CountSlots)
-	{
-		if (CountSlot)
-		{
-			CountSlot->SetVisibility(ESlateVisibility::Collapsed);
-		}
-	}
-	if (!bHasProgressItems)
-	{
-		for (URTSCommandButtonWidget* ProgressButton : ProgressButtonSlots)
-		{
-			if (ProgressButton)
-			{
-				ProgressButton->SetVisibility(ESlateVisibility::Hidden);
-			}
-		}
-	}
-
-	if (IconContainer)
-	{
-		IconContainer->SetVisibility(bHasProgressItems
-			? ESlateVisibility::Visible
-			: ESlateVisibility::Collapsed);
-	}
-
-	if (UnitRosterPane)
-	{
-		UnitRosterPane->SetVisibility(bHasProgressItems
-			? ESlateVisibility::SelfHitTestInvisible
-			: ESlateVisibility::Collapsed);
-	}
-
-	if (UnitPanelBodyGap)
-	{
-		UnitPanelBodyGap->SetVisibility(bHasProgressItems
-			? ESlateVisibility::HitTestInvisible
-			: ESlateVisibility::Collapsed);
-	}
-
-	if (UnitDetailPane)
-	{
-		UnitDetailPane->SetVisibility(ESlateVisibility::SelfHitTestInvisible);
-	}
-
+	SetContentRoute(ERTSSelectionMode::Single);
 	RefreshSingleUnitDetail(Data);
-	if (bHasProgressItems)
-	{
-		ShowCommandProgressItems(Data);
-	}
-	else
-	{
-		HideGridSlots();
-	}
+	ShowCommandProgressItems(Data);
 }
 
 void URTSUnitPanelWidget::ShowCommandProgressItems(const FRTSUnitData& OwnerData)
 {
-	if (!IconContainer)
+	for (URTSCommandButtonWidget* Button : ProgressButtonSlots)
+		if (Button) Button->SetVisibility(ESlateVisibility::Hidden);
+	ProgressButtonSlots.Reset();
+	TArray<UUserWidget*> Grids;
+	UWidgetBlueprintLibrary::GetAllWidgetsOfClass(this, Grids, URTSCommanderGridWidget::StaticClass(), false);
+	URTSCommanderGridWidget* CommandGrid = nullptr;
+	for (UUserWidget* Widget : Grids)
+		if (Widget->GetWorld() == GetWorld() && Widget->GetOwningPlayer() == GetOwningPlayer())
+		{ CommandGrid = CastChecked<URTSCommanderGridWidget>(Widget); break; }
+	if (CommandGrid) CommandGrid->ReleaseFinishedResearchButtons(OwnerData);
+	TArray<FRTSTimedCommandInstance> Active, Waiting;
+	for (const FRTSTimedCommandInstance& Source : OwnerData.CommandProgressItems)
 	{
-		return;
+		FRTSTimedCommandInstance Item = Source;
+		if (CommandGrid)
+			if (URTSCommandButton* Original = CommandGrid->FindDisplayedCommandButton(Item.CommandTag))
+				Item.CommandButton = Original;
+		if (!Item.CommandButton || !Item.CommandButton->bIsResearch) continue;
+		(Item.State == ERTSTimedCommandState::Queued ? Waiting : Active).Add(Item);
 	}
-
-	TArray<UUserWidget*> CommanderGridWidgets;
-	UWidgetBlueprintLibrary::GetAllWidgetsOfClass(
-		this,
-		CommanderGridWidgets,
-		URTSCommanderGridWidget::StaticClass(),
-		false);
-	TSubclassOf<URTSCommandButtonWidget> ResolvedButtonClass =
-		CommandButtonWidgetClass;
-	if (!ResolvedButtonClass)
+	const bool bResearch = !Active.IsEmpty() || !Waiting.IsEmpty();
+	if (WeaponArmorPanel) WeaponArmorPanel->SetVisibility(bResearch ? ESlateVisibility::Collapsed : ESlateVisibility::SelfHitTestInvisible);
+	if (UnitRosterPane) UnitRosterPane->SetVisibility(bResearch ? ESlateVisibility::SelfHitTestInvisible : ESlateVisibility::Collapsed);
+	if (ActivityQueueContainer) ActivityQueueContainer->SetVisibility(Waiting.IsEmpty() ? ESlateVisibility::Collapsed : ESlateVisibility::SelfHitTestInvisible);
+	if (!bResearch || !ActivityQueueContainer || !CommandGrid) return;
+	if (UWidget* Row = FindDescendantWidgetByName(this, TEXT("ActiveProductionRow")))
+		Row->SetVisibility(ESlateVisibility::SelfHitTestInvisible);
+	constexpr int32 ActiveSlots = 2;
+	constexpr int32 QueueSlots = 6;
+	if (EmptyQueueFrames.Num() != QueueSlots)
 	{
-		for (UUserWidget* CandidateWidget : CommanderGridWidgets)
+		ActivityQueueContainer->ClearChildren();
+		EmptyQueueFrames.Reset();
+		for (int32 Index = 0; Index < QueueSlots; ++Index)
 		{
-			if (const URTSCommanderGridWidget* CommanderGrid =
-				Cast<URTSCommanderGridWidget>(CandidateWidget))
+			USizeBox* Cell = WidgetTree->ConstructWidget<USizeBox>();
+			Cell->SetWidthOverride(SelectionButtonSize.X); Cell->SetHeightOverride(SelectionButtonSize.Y);
+			Cell->SetClipping(EWidgetClipping::ClipToBounds);
+			if (UGridSlot* CellSlot = Cast<UGridSlot>(ActivityQueueContainer->AddChild(Cell)))
 			{
-				ResolvedButtonClass =
-					CommanderGrid->GetCommandButtonWidgetClass();
-				if (ResolvedButtonClass)
-				{
-					break;
-				}
+				CellSlot->SetRow(0); CellSlot->SetColumn(Index); CellSlot->SetPadding(SelectionSlotPadding);
+				CellSlot->SetHorizontalAlignment(HAlign_Fill); CellSlot->SetVerticalAlignment(VAlign_Fill);
 			}
-		}
-	}
-	if (!ResolvedButtonClass)
-	{
-		ResolvedButtonClass = LoadClass<URTSCommandButtonWidget>(
-			nullptr,
-			TEXT("/Game/UI/HeadUpDisplay/ControlGird/CommandButton.CommandButton_C"));
-	}
-
-	TArray<URTSCommandButtonWidget*> UpdatedProgressButtons;
-	const int32 VisibleCount = FMath::Min(
-		OwnerData.CommandProgressItems.Num(),
-		ItemsPerPage);
-	for (int32 Index = 0; Index < VisibleCount; ++Index)
-	{
-		const FRTSTimedCommandInstance& ProgressItem =
-			OwnerData.CommandProgressItems[Index];
-		const FName ProgressItemId = ProgressItem.InstanceId.IsValid()
-			? FName(*ProgressItem.InstanceId.ToString(EGuidFormats::Digits))
-			: NAME_None;
-		URTSCommandButtonWidget* ButtonWidget = nullptr;
-		for (URTSCommandButtonWidget* ExistingButton : ProgressButtonSlots)
-		{
-			if (ExistingButton
-				&& ExistingButton->GetProgressItemId() == ProgressItemId)
+			URTSCommandButtonWidget* Frame = CreateWidget<URTSCommandButtonWidget>(this, CommandGrid->GetCommandButtonWidgetClass());
+			if (Frame)
 			{
-				ButtonWidget = ExistingButton;
-				break;
+				Frame->Init(nullptr);
+				FRTSTimedCommandInstance Empty; Empty.bCanCancel = false;
+				Frame->InitProgressItem(Empty, nullptr, SelectionButtonSize.X);
+				Cell->AddChild(Frame);
 			}
+			EmptyQueueFrames.Add(Frame);
 		}
-
-		if (!ButtonWidget)
+	}
+	for (int32 Index = 0; Index < ActiveSlots + QueueSlots; ++Index)
+	{
+		const bool bQueued = Index >= ActiveSlots;
+		const int32 Position = bQueued ? Index - ActiveSlots : Index;
+		const TArray<FRTSTimedCommandInstance>& Items = bQueued ? Waiting : Active;
+		const bool bOccupied = Items.IsValidIndex(Position);
+		UPanelWidget* Host = bQueued ? Cast<UPanelWidget>(ActivityQueueContainer->GetChildAt(Position))
+			: Cast<UPanelWidget>(FindDescendantWidgetByName(this, *FString::Printf(TEXT("ActiveIconHost%d"), Position)));
+		if (!bQueued)
 		{
-			ButtonWidget = ResolvedButtonClass
-				? CreateWidget<URTSCommandButtonWidget>(
-					this, ResolvedButtonClass)
-				: nullptr;
+			if (UWidget* Bounds = FindDescendantWidgetByName(this, *FString::Printf(TEXT("ActiveProductionBounds%d"), Position)))
+				Bounds->SetVisibility(bOccupied ? ESlateVisibility::SelfHitTestInvisible : ESlateVisibility::Collapsed);
+			if (UWidget* ActiveSlot = FindDescendantWidgetByName(this, *FString::Printf(TEXT("ActiveProductionSlot%d"), Position)))
+				ActiveSlot->SetVisibility(ESlateVisibility::SelfHitTestInvisible);
 		}
-
-		if (!ButtonWidget)
+		if (!Host) continue;
+		if (!bOccupied)
 		{
-			UE_LOG(
-				LogTemp,
-				Warning,
-				TEXT("RTSUnitPanelWidget: could not create activity button for progress item %s."),
-				*ProgressItemId.ToString());
+			if (bQueued && EmptyQueueFrames[Position])
+			{
+				if (EmptyQueueFrames[Position]->GetParent() != Host)
+				{ Host->ClearChildren(); Host->AddChild(EmptyQueueFrames[Position]); }
+			}
+			else Host->ClearChildren();
 			continue;
 		}
-
-		if (ButtonWidget->GetParent() != IconContainer)
+		const FRTSTimedCommandInstance& Item = Items[Position];
+		URTSCommandButtonWidget* Button = CommandGrid->AcquireResearchButton(Item, OwnerData);
+		if (!Button) continue;
+		if (Button->GetParent() != Host)
+		{ Host->ClearChildren(); Host->AddChild(Button); }
+		ProgressButtonSlots.Add(Button);
+		if (!bQueued)
 		{
-			ButtonWidget->RemoveFromParent();
-			if (UUniformGridPanel* UniformGrid =
-				Cast<UUniformGridPanel>(IconContainer))
-			{
-				UniformGrid->AddChildToUniformGrid(ButtonWidget, 0, 0);
-			}
-			else if (UGridPanel* GenericGrid =
-				Cast<UGridPanel>(IconContainer))
-			{
-				GenericGrid->AddChildToGrid(ButtonWidget, 0, 0);
-			}
-			else if (UWrapBox* WrapBox = Cast<UWrapBox>(IconContainer))
-			{
-				WrapBox->AddChildToWrapBox(ButtonWidget);
-			}
-			else
-			{
-				IconContainer->AddChild(ButtonWidget);
-			}
+			if (UTextBlock* Status = Cast<UTextBlock>(FindDescendantWidgetByName(this, *FString::Printf(TEXT("ActiveStatus%d"), Position))))
+				Status->SetText(FText::FromString(Item.State == ERTSTimedCommandState::Paused ? TEXT("已暂停") : TEXT("正在研发")));
+			UProgressBar* Progress = Position == 0 ? ActiveProgress0 : ActiveProgress1;
+			if (Progress) Progress->SetPercent(Item.GetProgress01());
 		}
-
-		const int32 Row = MaxColumns > 0 ? Index / MaxColumns : 0;
-		const int32 Column = MaxColumns > 0 ? Index % MaxColumns : 0;
-		if (UUniformGridSlot* UniformSlot =
-			Cast<UUniformGridSlot>(ButtonWidget->Slot))
-		{
-			UniformSlot->SetRow(Row);
-			UniformSlot->SetColumn(Column);
-			UniformSlot->SetHorizontalAlignment(HAlign_Fill);
-			UniformSlot->SetVerticalAlignment(VAlign_Fill);
-		}
-		else if (UGridSlot* GridSlot = Cast<UGridSlot>(ButtonWidget->Slot))
-		{
-			GridSlot->SetRow(Row);
-			GridSlot->SetColumn(Column);
-			GridSlot->SetHorizontalAlignment(HAlign_Fill);
-			GridSlot->SetVerticalAlignment(VAlign_Fill);
-		}
-
-		ButtonWidget->InitProgressItem(
-			ProgressItem,
-			OwnerData.ActorPtr);
-		ButtonWidget->SetRenderOpacity(
-			ProgressItem.State == ERTSTimedCommandState::Paused
-				? 0.65f
-				: 1.0f);
-		ButtonWidget->SetVisibility(ESlateVisibility::Visible);
-		UpdatedProgressButtons.Add(ButtonWidget);
 	}
-
-	for (URTSCommandButtonWidget* PreviousButton : ProgressButtonSlots)
-	{
-		if (!PreviousButton
-			|| UpdatedProgressButtons.Contains(PreviousButton))
-		{
-			continue;
-		}
-
-		PreviousButton->RemoveFromParent();
-		PreviousButton->SetVisibility(ESlateVisibility::Hidden);
-	}
-
-	ProgressButtonSlots = MoveTemp(UpdatedProgressButtons);
 }
 
 void URTSUnitPanelWidget::ShowGridContent(const FRTSSelectionView& View)
 {
 	HideGridSlots();
 	DisplayedSingleUnitData = FRTSUnitData();
-	const TArray<FRTSUnitData>& AllItems = View.Items;
-	const ERTSSelectionMode Mode = View.Mode;
-	const FString ActiveKey = View.ActiveGroupKey;
-
-	if (IconContainer)
+	SetContentRoute(View.Mode);
+	const bool bSummary = View.Mode == ERTSSelectionMode::Summary;
+	const TArray<URTSUnitIconWidget*>& Slots = bSummary ? SummaryIconSlots : IconSlots;
+	const int32 VisibleCount = FMath::Min(View.Items.Num(), Slots.Num());
+	for (int32 Index = 0; Index < VisibleCount; ++Index)
 	{
-		IconContainer->SetVisibility(ESlateVisibility::Visible);
-	}
-
-	if (UnitRosterPane)
-	{
-		UnitRosterPane->SetVisibility(ESlateVisibility::SelfHitTestInvisible);
-	}
-
-	if (UnitPanelBodyGap)
-	{
-		UnitPanelBodyGap->SetVisibility(ESlateVisibility::Collapsed);
-	}
-
-	if (UnitDetailPane)
-	{
-		UnitDetailPane->SetVisibility(ESlateVisibility::Collapsed);
-	}
-
-	// --- 3. Update Grid from Pool ---
-	if (!IconContainer || IconSlots.Num() == 0)
-	{
-		// UE_LOG(LogTemp, Warning, TEXT("RTSUnitPanelWidget: internal pool empty or container missing."));
-		return;
-	}
-
-	auto SetGridCell = [this](UWidget* Widget, int32 LinearIndex)
-	{
-		if (!Widget)
+		const FRTSUnitData& Data = View.Items[Index];
+		URTSUnitIconWidget* Icon = Slots[Index];
+		Icon->InitData(Data, true, !bSummary, !bSummary, IconSlotSize);
+		Icon->SetIsActive(View.ActiveGroupKey.IsEmpty()
+			|| GetSelectionWidgetUnitGroupKey(Data) == View.ActiveGroupKey);
+		Icon->SetVisibility(ESlateVisibility::Visible);
+		if (bSummary && CountSlots.IsValidIndex(Index))
 		{
-			return;
-		}
-
-		const int32 Row = MaxColumns > 0 ? LinearIndex / MaxColumns : 0;
-		const int32 Column = MaxColumns > 0 ? LinearIndex % MaxColumns : 0;
-
-		if (UUniformGridSlot* UniformSlot = Cast<UUniformGridSlot>(Widget->Slot))
-		{
-			UniformSlot->SetRow(Row);
-			UniformSlot->SetColumn(Column);
-			UniformSlot->SetHorizontalAlignment(HAlign_Fill);
-			UniformSlot->SetVerticalAlignment(VAlign_Fill);
-		}
-		else if (UGridSlot* GridSlot = Cast<UGridSlot>(Widget->Slot))
-		{
-			GridSlot->SetRow(Row);
-			GridSlot->SetColumn(Column);
-			GridSlot->SetHorizontalAlignment(HAlign_Fill);
-			GridSlot->SetVerticalAlignment(VAlign_Fill);
-		}
-	};
-
-	int32 StartIndex = 0;
-	const bool bIsSummaryMode = Mode == ERTSSelectionMode::Summary;
-
-	for (UTextBlock* CountSlot : CountSlots)
-	{
-		if (CountSlot)
-		{
-			CountSlot->SetVisibility(ESlateVisibility::Collapsed);
+			CountSlots[Index]->SetText(FText::FromString(FString::Printf(TEXT("x%d"), Data.Count)));
+			CountSlots[Index]->SetVisibility(ESlateVisibility::HitTestInvisible);
 		}
 	}
-
-	if (bIsSummaryMode)
-	{
-		for (URTSUnitIconWidget* SlotWidget : IconSlots)
-		{
-			if (SlotWidget)
-			{
-				SlotWidget->SetVisibility(ESlateVisibility::Hidden);
-			}
-		}
-
-		const int32 SummaryCapacity = FMath::Min(
-			FMath::Min(IconSlots.Num(), CountSlots.Num()),
-			ItemsPerPage / 2);
-		const int32 MaxVisibleSummaries = FMath::Min(AllItems.Num(), SummaryCapacity);
-
-		for (int32 i = 0; i < MaxVisibleSummaries; ++i)
-		{
-			const int32 DataIndex = StartIndex + i;
-			const FRTSUnitData& Data = AllItems[DataIndex];
-
-			URTSUnitIconWidget* SlotWidget = IconSlots[i];
-			UTextBlock* CountSlot = CountSlots[i];
-
-			if (SlotWidget)
-			{
-				SetGridCell(SlotWidget, i * 2);
-				SlotWidget->InitData(Data, true, false, false, IconSlotSize);
-
-				const bool bIsActive = ActiveKey.IsEmpty() || (GetSelectionWidgetUnitGroupKey(Data) == ActiveKey);
-				SlotWidget->SetIsActive(bIsActive);
-				SlotWidget->SetVisibility(ESlateVisibility::Visible);
-			}
-
-			if (CountSlot)
-			{
-				SetGridCell(CountSlot, i * 2 + 1);
-				CountSlot->SetText(FText::FromString(FString::Printf(TEXT("x%d"), Data.Count)));
-				CountSlot->SetVisibility(ESlateVisibility::HitTestInvisible);
-			}
-		}
-
-		return;
-	}
-	
-	for (int32 i = 0; i < IconSlots.Num(); i++)
-	{
-		URTSUnitIconWidget* SlotWidget = IconSlots[i];
-		if (!SlotWidget) continue;
-
-		int32 DataIndex = StartIndex + i; // Simple linear mapping
-
-		if (DataIndex < AllItems.Num())
-		{
-			// Valid Item
-			const FRTSUnitData& Data = AllItems[DataIndex];
-			
-			SetGridCell(SlotWidget, i);
-
-			// Update Data
-			SlotWidget->InitData(Data, true, true, true, IconSlotSize);
-			
-			// Highlight Logic
-			bool bIsActive = ActiveKey.IsEmpty() || (GetSelectionWidgetUnitGroupKey(Data) == ActiveKey);
-			SlotWidget->SetIsActive(bIsActive);
-
-			// Visible
-			SlotWidget->SetVisibility(ESlateVisibility::Visible); // or SelfHitTestInvisible
-		}
-		else
-		{
-			// Empty Slot
-			SlotWidget->SetVisibility(ESlateVisibility::Hidden); // Hidden = Layout Reserved. Collapsed = Gone.
-		}
-	}
-
 }
 
 void URTSUnitPanelWidget::HideGridSlots()
 {
-	TArray<URTSCommandButtonWidget*> ButtonsToRestore =
-		MoveTemp(ProgressButtonSlots);
-	ProgressButtonSlots.Reset();
-	for (URTSCommandButtonWidget* ProgressButton : ButtonsToRestore)
-	{
-		if (!ProgressButton)
-		{
-			continue;
-		}
-
-		ProgressButton->RemoveFromParent();
-		ProgressButton->SetVisibility(ESlateVisibility::Hidden);
-	}
+	for (URTSCommandButtonWidget* ProgressButton : ProgressButtonSlots)
+		if (ProgressButton) ProgressButton->SetVisibility(ESlateVisibility::Hidden);
 
 	for (URTSUnitIconWidget* SlotWidget : IconSlots)
 	{
@@ -1248,6 +744,9 @@ void URTSUnitPanelWidget::HideGridSlots()
 			SlotWidget->SetVisibility(ESlateVisibility::Hidden);
 		}
 	}
+
+	for (URTSUnitIconWidget* Icon : SummaryIconSlots)
+		if (Icon) Icon->SetVisibility(ESlateVisibility::Hidden);
 
 	for (UTextBlock* CountSlot : CountSlots)
 	{
@@ -1260,7 +759,7 @@ void URTSUnitPanelWidget::HideGridSlots()
 
 void URTSUnitPanelWidget::RefreshSingleUnitDetail(const FRTSUnitData& Data)
 {
-	UWidget* DetailRoot = UnitDetailPane ? UnitDetailPane : Cast<UWidget>(this);
+	UWidget* DetailRoot = this;
 	if (!DetailRoot)
 	{
 		return;
@@ -1286,7 +785,6 @@ void URTSUnitPanelWidget::RefreshSingleUnitDetail(const FRTSUnitData& Data)
 	if (UTextBlock* NameText = Cast<UTextBlock>(FindDescendantWidgetByName(DetailRoot, TEXT("UnitNameText"))))
 	{
 		NameText->SetText(FText::FromString(Data.Name));
-		NameText->SetColorAndOpacity(FSlateColor(FLinearColor(0.78f, 1.0f, 0.91f, 1.0f)));
 		NameText->SetShadowColorAndOpacity(FLinearColor(0.0f, 0.0f, 0.0f, 0.8f));
 		NameText->SetShadowOffset(FVector2D(1.0f, 1.0f));
 		NameText->SetVisibility(ESlateVisibility::HitTestInvisible);
@@ -1303,6 +801,14 @@ void URTSUnitPanelWidget::RefreshSingleUnitDetail(const FRTSUnitData& Data)
 		}
 	};
 
+	SetOptionalDetailText(TEXT("UnitClassificationText"), Data.OrganizationLabel.IsEmpty()
+		? Data.UnitCategory : Data.OrganizationLabel + TEXT(" - ") + Data.UnitCategory);
+	SetOptionalDetailText(TEXT("WeaponStats"), Data.bHasWeapon
+		? FString::Printf(TEXT("基础伤害  %.0f\n射程  %.0f\n冷却  %.1fs"), Data.WeaponDamage, Data.WeaponRange, Data.WeaponPeriod)
+		: TEXT("无武器"));
+	SetOptionalDetailText(TEXT("ArmorStats"), FString::Printf(TEXT("普通伤害减免\n%.0f%%"), Data.ArmorReduction * 100.0f));
+	SetOptionalDetailText(TEXT("HealthValueText"), Data.MaxHealth > 0.0f
+		? FString::Printf(TEXT("%.0f / %.0f"), FMath::Clamp(Data.Health, 0.0f, Data.MaxHealth), Data.MaxHealth) : FString());
 	SetOptionalDetailText(TEXT("UnitRoleText"), Data.Role);
 	SetOptionalDetailText(TEXT("RoleText"), Data.Role);
 	SetOptionalDetailText(TEXT("RoleValue"), Data.Role);
@@ -1339,7 +845,7 @@ void URTSUnitPanelWidget::RefreshSingleUnitDetail(const FRTSUnitData& Data)
 
 void URTSUnitPanelWidget::RefreshSingleUnitActivity(const FRTSUnitData& Data)
 {
-	UWidget* DetailRoot = UnitDetailPane ? UnitDetailPane : Cast<UWidget>(this);
+	UWidget* DetailRoot = this;
 	if (!DetailRoot)
 	{
 		return;
@@ -1356,7 +862,7 @@ void URTSUnitPanelWidget::RefreshSingleUnitActivity(const FRTSUnitData& Data)
 			ActivityText += FString::Printf(TEXT("  等待 %d"), Data.ProductionQueuedOrders);
 		}
 	}
-	if (Data.bHasActivity)
+	if (Data.bHasActivity && Data.CommandProgressItems.IsEmpty())
 	{
 		if (!ActivityText.IsEmpty())
 		{
@@ -1385,7 +891,7 @@ void URTSUnitPanelWidget::RefreshSingleUnitActivity(const FRTSUnitData& Data)
 	{
 		ActivityBar->SetIsMarquee(false);
 		ActivityBar->SetPercent(FMath::Clamp(Data.ActivityProgress, 0.0f, 1.0f));
-		ActivityBar->SetVisibility(Data.bHasActivity
+		ActivityBar->SetVisibility(Data.bHasActivity && Data.CommandProgressItems.IsEmpty()
 			? ESlateVisibility::HitTestInvisible
 			: ESlateVisibility::Collapsed);
 	}

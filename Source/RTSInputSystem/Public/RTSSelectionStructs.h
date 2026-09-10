@@ -101,6 +101,29 @@ struct FRTSUnitData
 	UPROPERTY(BlueprintReadOnly, Category = "RTS Selection")
 	FString Role;
 
+	/** Presentation labels supplied by the existing unit/force data. */
+	UPROPERTY(BlueprintReadOnly, Category = "RTS Selection|Combat")
+	FString OrganizationLabel;
+
+	UPROPERTY(BlueprintReadOnly, Category = "RTS Selection|Combat")
+	FString UnitCategory;
+
+	UPROPERTY(BlueprintReadOnly, Category = "RTS Selection|Combat")
+	bool bHasWeapon = false;
+
+	UPROPERTY(BlueprintReadOnly, Category = "RTS Selection|Combat")
+	float WeaponDamage = 0.0f;
+
+	UPROPERTY(BlueprintReadOnly, Category = "RTS Selection|Combat")
+	float WeaponRange = 0.0f;
+
+	UPROPERTY(BlueprintReadOnly, Category = "RTS Selection|Combat")
+	float WeaponPeriod = 0.0f;
+
+	/** Actual normal-damage resistance (0..1), not an invented armor-point scale. */
+	UPROPERTY(BlueprintReadOnly, Category = "RTS Selection|Combat")
+	float ArmorReduction = 0.0f;
+
 	/** Compact icon used by selection grids and summary cells. */
 	UPROPERTY(BlueprintReadOnly, Category = "RTS Selection")
 	UTexture2D* Icon = nullptr;
@@ -153,19 +176,6 @@ struct FRTSUnitData
 	 */
 	UPROPERTY(BlueprintReadOnly, Category = "RTS Selection|Activity")
 	TArray<FRTSTimedCommandInstance> CommandProgressItems;
-
-	/** Set only on a synthesized icon representing one common progress item. */
-	UPROPERTY(BlueprintReadOnly, Category = "RTS Selection|Activity")
-	bool bIsCommandProgressItem = false;
-
-	UPROPERTY(BlueprintReadOnly, Category = "RTS Selection|Activity")
-	FName CommandProgressItemId;
-
-	UPROPERTY(BlueprintReadOnly, Category = "RTS Selection|Activity")
-	bool bCanCancelCommandProgressItem = false;
-
-	UPROPERTY(BlueprintReadOnly, Transient, Category = "RTS Selection|Activity")
-	TObjectPtr<UObject> CommandProgressActionTarget = nullptr;
 
 	UPROPERTY(BlueprintReadOnly, Category = "RTS Selection|Activity")
 	FText ActivityLabel;

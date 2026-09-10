@@ -57,5 +57,14 @@ public class RTSInputSystem : ModuleRules
 			{
 			}
 		);
+
+		// Portrait and command textures are imported from disk at runtime with
+		// FImageUtils, so they must remain loose in packaged builds.
+		RuntimeDependencies.Add(
+			"$(PluginDir)/Content/Portraits/Source/...",
+			StagedFileType.NonUFS);
+		RuntimeDependencies.Add(
+			"$(PluginDir)/Content/CommandIcons/Source/...",
+			StagedFileType.NonUFS);
 	}
 }

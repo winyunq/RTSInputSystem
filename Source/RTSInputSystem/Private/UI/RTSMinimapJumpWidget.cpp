@@ -152,7 +152,17 @@ int32 URTSMinimapJumpWidget::NativePaint(
 	const FWidgetStyle& InWidgetStyle,
 	bool bParentEnabled) const
 {
-	const int32 MaxLayerId = Super::NativePaint(Args, AllottedGeometry, MyCullingRect, OutDrawElements, LayerId, InWidgetStyle, bParentEnabled);
+	int32 MaxLayerId = Super::NativePaint(Args, AllottedGeometry, MyCullingRect, OutDrawElements, LayerId, InWidgetStyle, bParentEnabled);
+	if (GetWorld() && GetWorld()->GetTimeSeconds() < MarkerExpiresAt)
+	{
+		const FVector2D Center = ConvertWorldToWidgetLocal(FVector2D(MarkerLocation), AllottedGeometry.GetLocalSize());
+		const float DrawScale = FMath::Max(AllottedGeometry.GetAccumulatedLayoutTransform().GetScale(), 0.01f);
+		const float Radius = 12.0f / DrawScale;
+		TArray<FVector2D> Diamond = { Center + FVector2D(0, -Radius), Center + FVector2D(Radius, 0),
+			Center + FVector2D(0, Radius), Center + FVector2D(-Radius, 0), Center + FVector2D(0, -Radius) };
+		FSlateDrawElement::MakeLines(OutDrawElements, ++MaxLayerId, AllottedGeometry.ToPaintGeometry(),
+			Diamond, ESlateDrawEffect::None, MarkerColor, true, 2.0f / DrawScale);
+	}
 	if (!bDrawCameraFrustum || FrustumLineThickness <= 0.0f)
 	{
 		return MaxLayerId;
@@ -395,7 +405,11 @@ bool URTSMinimapJumpWidget::TryIssueMoveCommand(const FVector& WorldLocation) co
 
 	const bool bQueueCommand = PlayerController->IsInputKeyDown(EKeys::LeftShift)
 		|| PlayerController->IsInputKeyDown(EKeys::RightShift);
-	SelectionSubsystem->IssueCommandWithLocation(MoveTag, WorldLocation, bQueueCommand);
+	SelectionSubsystem->IssueCommandWithLocation(
+		MoveTag,
+		WorldLocation,
+		bQueueCommand,
+		/*bForceStrategicNavigation*/ true);
 	return true;
 }
 
@@ -407,6 +421,21 @@ void URTSMinimapJumpWidget::RequestMoveCommand(const FVector2D& WorldPos)
 
 FReply URTSMinimapJumpWidget::NativeOnMouseButtonDown(const FGeometry& InGeometry, const FPointerEvent& InMouseEvent)
 {
+	if (bLocationPicking)
+	{
+		if (InMouseEvent.GetEffectingButton() == EKeys::LeftMouseButton)
+		{
+			bLocationPicking = false;
+			const FVector2D LocalPos = InGeometry.AbsoluteToLocal(InMouseEvent.GetScreenSpacePosition());
+			OnLocationPicked.Broadcast(ResolveCommandWorldLocation(ConvertWidgetLocalToWorld(LocalPos, InGeometry.GetLocalSize())));
+			return FReply::Handled();
+		}
+		if (InMouseEvent.GetEffectingButton() == EKeys::RightMouseButton)
+		{
+			bLocationPicking = false;
+			return FReply::Handled();
+		}
+	}
 	if (InMouseEvent.GetEffectingButton() == EKeys::LeftMouseButton)
 	{
 		const FVector2D LocalPos = InGeometry.AbsoluteToLocal(InMouseEvent.GetScreenSpacePosition());
@@ -429,6 +458,14 @@ FReply URTSMinimapJumpWidget::NativeOnMouseButtonDown(const FGeometry& InGeometr
 		return FReply::Handled();
 	}
 	return FReply::Unhandled();
+}
+
+void URTSMinimapJumpWidget::ShowLocationMarker(const FVector& Location, const FLinearColor& Color)
+{
+	MarkerLocation = Location;
+	MarkerColor = Color;
+	MarkerExpiresAt = GetWorld() ? GetWorld()->GetTimeSeconds() + 12.0 : 0.0;
+	InvalidateLayoutAndVolatility();
 }
 
 FReply URTSMinimapJumpWidget::NativeOnMouseButtonUp(const FGeometry& InGeometry, const FPointerEvent& InMouseEvent)

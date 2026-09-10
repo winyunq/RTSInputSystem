@@ -1,212 +1,79 @@
 # RTS UnitPanel Architecture
 
-这份图只定义 UnitPanel 架构边界，不定义具体美术样式。
+## HUD 边界
 
-## 1. HUD 横向主结构
+小地图、UnitDetailPanel、RTSAvatar 和命令面板是独立的 HUD 块。UnitPanel 内部的编队条独立监听选择与控制组更新，不参与选择详情路由。
 
-星际式底部 HUD 不是一个大面板里硬塞所有东西，而是几个并列的大块。
+## 三个面板叠放
 
-```mermaid
-flowchart LR
-    MiniMap["MiniMapFrame / 小地图"]
-    UnitPanel["UnitDetailPanel / UnitPanel"]
-    Avatar["RTSAvatar / 独立头像或指挥官肖像"]
-    Command["ControlGrid / 命令面板"]
-
-    MiniMap --> UnitPanel --> Avatar --> Command
+```text
+UnitPanelFrame
+└─ UnitPanelContentRoot
+   ├─ UnitPanelHeaderBounds（固定编队条高度）
+   │  └─ UnitFormationList
+   └─ UnitPanelRouteBounds（固定 8 列 × 3 行完整槽位）
+      └─ UnitPanelRoutes（Overlay）
+         ├─ SingleUnitPanel：一个单位的详情
+         ├─ IconContainer：一些单位，每个单位占一格
+         └─ SummaryIconContainer：一群单位，每类图标与数量各占一格
 ```
 
-边界：
-- `UnitDetailPanel` 只负责 UnitPanel。
-- `RTSAvatar` 是独立 HUD 块，不属于 UnitPanel 内部内容。
-- `ControlGrid` 是命令面板，不属于 UnitPanel。
-- `MiniMapFrame` 是小地图，不属于 UnitPanel。
+三个面板覆盖同一块区域，按 `FRTSSelectionView.Mode` 互斥显示。单选采用垂直结构：顶部居中单位名称，中间为图标、属性与武器／护甲，底部居中显示编制和类别。右侧武器／护甲与研发区域叠放，只由正在执行的按钮的 `bIsResearch` 能力决定切换；单位类型和生产能力不参与这条判断。
 
-## 2. UnitPanel 内部结构
+| 选择状态 | SingleUnitPanel | IconContainer | SummaryIconContainer |
+| --- | --- | --- | --- |
+| Empty | Collapsed | Collapsed | Collapsed |
+| Single | Visible | Collapsed | Collapsed |
+| List | Collapsed | Visible | Collapsed |
+| Summary | Collapsed | Collapsed | Visible |
 
-UnitPanel 分两层：外壳和内容。外壳固定置底；内容按选择状态走互斥路由。
+无选择且无已编队单位时，整个 UnitPanel 使用 Hidden 保留占位；已存在编队时仍显示编队条。十个编队固定按 1–9、0 排列，有单位才显示，空编队 Hidden 而非 Collapsed。编队条两端对齐：按钮保持配置的固定宽度，第一个按钮左边与最后一个按钮右边对齐下方网格按钮边缘，剩余宽度均分到九个间隔。空编队仍保留完整槽位和间隔。各状态不因名称、选择数量或队列填充情况改变外壳尺寸。
 
-```mermaid
-flowchart TB
-    Shell["URTSUnitPanelWidget\n固定外壳 / fixed bounds / bottom aligned"]
-    Formation["UnitFormationList\n独立编队/分组信息条\n可隐藏但不等于选择列表"]
-    RouteHost["RouteHost / UnitPanelBody\n互斥内容路由"]
+## 尺寸来源
 
-    Shell --> Formation
-    Shell --> RouteHost
+128 表示图标本体大小，不能作为含边框按钮的完整格子尺寸。UnitPanel 复用 `ControlGrid` 类默认对象的 `ButtonSize` 与 `SlotPadding`，按钮外尺寸包含其边框；槽位间距只计一次。
 
-    RouteHost --> Empty["EmptyRoute\n无选择：隐藏内容，保留面板结构"]
-    RouteHost --> Single["SingleRoute\n单选：单位详细信息"]
-    RouteHost --> Group["GroupRoute\n一组选择：单位列表或单位类型数量"]
-    Group --> List["List data\n中量：单位 icon 列表"]
-    Group --> Summary["Summary data\n大量：单位类型 + 数量"]
-```
+- `CellWidth = ButtonSize.X + SlotPadding.Left + SlotPadding.Right`
+- `CellHeight = ButtonSize.Y + SlotPadding.Top + SlotPadding.Bottom`
+- `ContentWidth = SelectionGridColumns * CellWidth`
+- `ContentHeight = SelectionGridRows * CellHeight`
+- `PanelWidth = ContentWidth + PanelPadding.Left + PanelPadding.Right`
+- `PanelHeight = ContentHeight + HeaderHeight + PanelPadding.Top + PanelPadding.Bottom`
 
-核心规则：
-- UnitPanel 外壳是一个概念，UnitPanel 内容是另一个概念。
-- `UnitFormationList` 是独立 widget，负责编队/分组信息，不属于单选详情，也不属于选择列表。
-- `SingleRoute` 和 `GroupRoute` 是两个界面容器，互斥显示。
-- `List` 和 `Summary` 是 `GroupRoute` 内的数据形态，不是第三个单独界面容器。
-- 单选时不显示列表。
-- 中量和大量时不显示单体详细信息。
+当前按钮外尺寸为 144×144，槽位四边各 4，所以一个完整槽位是 152×152；8×3 内容区是 1216×456。编队条预留 68，面板左右各 16、上下各 4，外壳为 1248×532。HUD 可以整体缩放；这些是缩放前的 UMG 布局单位。
 
-## 3. 后端选择状态
+配置允许增加行列数，最少为 8 列、3 行。模板子项数量、GridPanel 的旧 RowFill/ColumnFill、选中单位数均不决定面板尺寸。
 
-后端只输出一个 `FRTSSelectionView`，前端按 `Mode` 选择路由。
+## 格子与生产队列
 
-```mermaid
-flowchart TB
-    Raw["SelectedActors + SelectedEntities"]
-    Count["TotalCount"]
-    Zero["TotalCount == 0"]
-    One["TotalCount == 1"]
-    Mid["2 <= TotalCount <= SelectionSummaryThreshold"]
-    Large["TotalCount > SelectionSummaryThreshold"]
+列表和汇总使用独立对象池，每个格子按完整按钮外尺寸固定，再通过 GridSlot/UniformGridSlot 添加共享间距。图标本体居中，数量文字在固定格子内按需缩小，不能撑宽整列。未用格子的容器保留尺寸。
 
-    Raw --> Count
-    Count --> Zero --> EmptyView["Mode=Empty\nItems=[]"]
-    Count --> One --> SingleView["Mode=Single\nSingleUnit=unit\nItems=[unit] for external consumers"]
-    Count --> Mid --> ListView["Mode=List\nItems=each selected unit\nCount=1"]
-    Count --> Large --> SummaryView["Mode=Summary\nItems=grouped by GroupKey\nCount=group size"]
-```
+默认列表容量为 24 个单位；汇总容量为 12 类，每类占相邻两个格子。增加固定行列配置可提高容量；奇数列最后一格留空，图标与数量不跨行。
 
-配置项：
-- `SelectionSummaryThreshold = 16`
-- `SelectionGridRows = 3`
-- `SelectionGridColumns = 8`
-- `SelectionIconSize = 128`
-- `SelectionPanelHeaderHeight = 44`
-- `FormationListMaxSlots = 8`
-- `FormationListIconSize = 32`
-- `FormationListSlotGap = 4`
+单选名称和底部编制／类别各占半行，中间恰好两行。中间左侧占两列：`UnitIdentityBounds → UnitIdentityContent（VerticalBox）`，其中头像在上，`InfoVerticalBox` 的血条、生命值和其他状态在下。删除原来把头像和生命信息横向拆开的 `UnitPortraitBounds`、`UnitStatsBounds` 及多余身份边框。头像保持比例，血条使用头像列宽，不随生命值文本长短改变；没有有效生命上限时同时隐藏血条和数值。
 
-固定尺寸公式：
-- `PanelWidth = SelectionGridColumns * SelectionIconSize + Padding.Left + Padding.Right`
-- `PanelHeight = SelectionPanelHeaderHeight + SelectionGridRows * SelectionIconSize + Padding.Top + Padding.Bottom`
-- 当前默认值：`Width = 8 * 128 + 16 + 16 = 1056`，`Height = 44 + 3 * 128 + 4 + 4 = 436`。
+中间右侧占六列、两行。上排两个当前项目，每个项目一格按钮加两格进度，合计三格；下排恰好六个预备槽。当前按钮保持 144×144 的完整外尺寸，两格进度区域扣除左右各 4 的间距后宽 296。没有预备项目时隐藏整条预备队列，当前项目在右侧区域水平、垂直居中；一个项目占三格，两个项目占六格。出现预备项目后显示完整六槽，未使用的槽位显示空框。生产和通用研发的现有入队入口均拒绝超过六个预备项目的订单。
 
-这里的固定是 UnitPanel 外壳固定；`SingleRoute`、`GroupRoute` 只是外壳内部的互斥内容，不反向决定外壳尺寸。`Items[0]` 可以继续给外部头像/样式消费者使用，但 UnitPanel 不用它把单选画成列表。
+## 按钮的移动、复制和回调
 
-## 4. 前端路由映射
+命令网格的十五个固定容器只负责位置，`CommandButtonInstances` 保存原命令按钮实例。研发按钮具有两个独立属性：`bIsResearch` 表示使用研发表现，`bRepeatableResearch` 表示可重复执行。生产按钮在公共基类声明这两项能力，不能按具体单位另外判断。
 
-```mermaid
-flowchart LR
-    View["FRTSSelectionView"]
-    Mode{"Mode"}
+- 一次性按钮从命令卡直接移出，并将同一个控件实例挂到研发容器。原位置保留空槽。
+- 可重复按钮通过 `DuplicateObject` 复制控件实例和控件树，原按钮继续留在命令卡，副本挂到研发容器。
+- 研发区把按钮的 `OnClicked` 从命令执行回调切换为取消回调。图标、名称、说明、费用等仍由原按钮定义提供，提示框复用命令网格原有实现。
+- 点击取消通过原有 `RTSCommandProgressController` 处理权限、退费及队列推进。收到该实例已移除的状态后，一次性按钮移回命令卡并恢复原回调；副本移出容器并释放引用，交由 UObject 回收。
+- 等待项目进入当前研发位置时，移动现有的队列按钮实例，不重新构造按钮。一次性项目正常完成后消耗原按钮，可重复项目完成后释放副本。
 
-    View --> Mode
-    Mode -->|"Empty"| EmptyRoute["ShowEmptyContent()\nUnitDetailPane hidden\nUnitRosterPane hidden"]
-    Mode -->|"Single"| SingleRoute["ShowSingleContent()\nUnitDetailPane visible\nUnitRosterPane collapsed"]
-    Mode -->|"List"| ListRoute["ShowGridContent()\nUnitRosterPane visible\nUnitDetailPane collapsed"]
-    Mode -->|"Summary"| SummaryRoute["ShowGridContent()\nUnitRosterPane visible\nUnitDetailPane collapsed"]
-```
+`ResearchButtons` 仅保存按现有 `FRTSTimedCommandInstance.InstanceId` 索引的控件引用，不维护另一份计时、排队或执行状态。固定的空槽框与真实研发按钮分离，禁止通过清空按钮数据、重填另一槽位来模拟按钮移动。国策菜单刷新也保留原按钮定义，不在每次刷新时重建定义对象。
 
-可见性规则：
+## 验证
 
-| Route | UnitPanelFrame | UnitFormationList | UnitDetailPane | UnitRosterPane/IconContainer |
-| --- | --- | --- | --- | --- |
-| Empty | Visible | Optional/Hidden | Hidden | Hidden |
-| Single | Visible | Optional | Visible | Collapsed |
-| List | Visible | Optional | Collapsed | Visible |
-| Summary | Visible | Optional | Collapsed | Visible |
+Tab 切组属于 `URTSSelector` 的既有输入处理器，直接调用 `URTSSelectionSubsystem::CycleGroup`，不随命令卡重建绑定。处理发生在 Slate 焦点导航之前，因此命令按钮、编队按钮或小地图获得键盘焦点后仍可切组。输入范围限于同一玩家的游戏视口；编辑器窗口、文字输入框、UI-only 模式和暂停状态交回原 UI 处理。长按 Tab 只切换一次，不继续触发 UI 焦点导航。
 
-`UnitFormationList` 隐藏或显示自己的内容，但不改变 UnitPanel 外壳尺寸。
+`Winyunq.Input.SelectionTabFocus` 使用独立的实际 LocalPlayer、游戏视口、命令按钮蓝图和 Slate 键盘事件，先复现按钮把 Tab 处理为焦点导航，再验证选择器接管后的切组。覆盖分组刷新保留当前组、命令卡子按钮替换后无需再次点击即可连续切组、长按只切一次，以及文字输入、UI-only 模式和视口外焦点不会被抢走 Tab。
 
-## 5. 三种内容形态
+循环回归包含四个组，跨 32 个编辑器帧逐次发送 Tab 并检查 `Alpha → Bravo → Charlie → Delta → Alpha`，每次都刷新选择视图。相机边缘滚屏复用原 `URTSCamera::executeEdgeScrollingEvaluation` 和移动入口，认可游戏视口内 HUD 的焦点，使用实时 Slate 鼠标位置，不依赖场景视口鼠标缓存。`RTSCamera - Edge Scroll Settings / distanceFromEdgeThreshold` 是各方向触发距离占视口尺寸的比例：`0.02` 为 2%，`0` 禁用；默认仍为 `0.1`。离开游戏视口、切到其他窗口或 UI-only 模式时不滚屏。测试使用渲染后的视口几何，检查四边、触发距离修改、静止光标持续移动与实际相机根组件位移；无原生窗口的测试仅替代前台状态，焦点和鼠标捕获仍走真实 Slate。
 
-### SingleRoute
+`Winyunq.UI.UnitPanelLayout` 使用真实详情、命令卡和按钮蓝图，通过 Slate 渲染读取实际几何，覆盖头像下方血条及生命比例、完整状态信息不溢出、无生命上限、空闲生产、研发能力切换、单／双当前项目、六槽队列、排空、满格列表及长数字汇总。测试还用原有生产提供者执行取消，检查一次性按钮的对象身份、移回后的命令模式、副本的控件树独立性，以及一个当前项目加六个预备项目的生产入队上限。渲染结果保存在 `Saved/UnitPanelArchitecture`。
 
-```mermaid
-flowchart LR
-    Single["SingleRoute"]
-    UnitIcon["Unit icon / portrait area\n128 x 128"]
-    Text["Name + Health/Energy/Shield"]
-
-    Single --> UnitIcon --> Text
-```
-
-注意：
-- SingleRoute 不预设装备、武器、护甲、额外索引槽。
-- 需要显示什么单体信息，由明确的数据字段和明确控件决定，不提前造空槽。
-
-### ListRoute
-
-```mermaid
-flowchart TB
-    List["ListRoute: 2..16 units"]
-    Grid["IconContainer\n3 rows x 8 columns\n128 cell"]
-    UnitCells["UnitIconWidget[]\n每个单位一个格子"]
-
-    List --> Grid --> UnitCells
-```
-
-规则：
-- 直接显示每个被选单位的 icon。
-- 空 cell `Hidden`，保留 grid 尺寸。
-
-### SummaryRoute
-
-```mermaid
-flowchart TB
-    Summary["SummaryRoute: TotalCount > 16"]
-    Grid["IconContainer\n3 rows x 8 columns\n128 cell"]
-    Pair["每组占两个 cell"]
-    IconCell["左 cell：单位 icon"]
-    CountCell["右 cell：x数量"]
-
-    Summary --> Grid --> Pair
-    Pair --> IconCell
-    Pair --> CountCell
-```
-
-规则：
-- Summary 的 item 是 group，不是单个单位。
-- group key 来自 `GroupKey`，数量来自 `Count`。
-- 一个 summary group 占 2 个 cell。
-
-## 6. icon / portrait / avatar 边界
-
-```mermaid
-flowchart TB
-    Data["FRTSUnitData"]
-    Icon["Icon\nUnitPanel grid/list/summary 小图标"]
-    Portrait["Portrait\nSingleRoute 详细信息大图，可回退到 Icon"]
-    Avatar["RTSAvatar\n独立 HUD 块，不属于 UnitPanel"]
-
-    Data --> Icon
-    Data --> Portrait
-    Avatar -. separate widget .- Data
-```
-
-规则：
-- `Icon` 是 UnitPanel 内的单位图标。
-- `Portrait` 是单选详细信息里可以使用的大图资源。
-- `RTSAvatar` 是 HUD 横向主结构里的独立块。
-- 不能因为单选显示详细信息，就把 UnitPanel 的 icon 概念删掉。
-- 不能因为有 `RTSAvatar`，就把 UnitPanel 内部图标改成 avatar。
-
-## 7. 代码责任边界
-
-```mermaid
-flowchart LR
-    SelectionSubsystem["URTSSelectionSubsystem\nBuildSelectionView()"]
-    SelectionView["FRTSSelectionView\nMode + SingleUnit + Items + ActiveGroupKey"]
-    UnitPanelWidget["URTSUnitPanelWidget\nfixed bounds + route rendering"]
-    FormationWidget["URTSFormationListWidget\nformation/group strip"]
-    UnitIconWidget["URTSUnitIconWidget\nsingle cell rendering"]
-    UMG["UnitDetailPanel.uasset\nlayout tree"]
-
-    SelectionSubsystem --> SelectionView --> UnitPanelWidget
-    SelectionView --> FormationWidget
-    UnitPanelWidget --> UnitIconWidget
-    FormationWidget --> UnitIconWidget
-    UnitPanelWidget --> UMG
-```
-
-职责：
-- `URTSSelectionSubsystem` 决定选择状态和数据形态。
-- `FRTSSelectionView.Mode` 决定前端路由。
-- `URTSUnitPanelWidget` 负责固定 UnitPanel 尺寸，并根据 route 控制单选详情/选择列表的可见性和填充数据。
-- `URTSFormationListWidget` 负责 UnitPanel header 里的编队/分组信息条；它自己监听 `FRTSSelectionView`，不让 UnitPanel 主路由知道它内部怎么画。
-- `URTSUnitIconWidget` 只负责一个格子的视觉。
-- `UnitDetailPanel.uasset` 只负责结构和外观布局，不负责选择状态机。
+`Winyunq.RTSTechnology.Research.BoundedQueue` 验证一个当前项目加六个预备项目后的请求被原入队入口拒绝。

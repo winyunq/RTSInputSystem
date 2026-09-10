@@ -1,4 +1,5 @@
 #include "UI/RTSCommanderGridWidget.h"
+#include "Components/SizeBox.h"
 #include "Components/Border.h"
 #include "Components/UniformGridSlot.h"
 #include "Components/InputComponent.h"
@@ -185,6 +186,100 @@ namespace
 		if (TagName == FName(TEXT("RTS.Command.Patrol")))
 		{
 			return TEXT("RTS_Command_Patrol.png");
+		}
+
+		// Authored icon-only government, city and production-menu artwork.
+		static const TMap<FName, const TCHAR*> AuthoredIcons = {
+			{ FName(TEXT("RTS.Command.Air.OpenProduction")), TEXT("T_WW2_Buildings_Airfield.png") },
+			{ FName(TEXT("RTS.Command.Build.Airfield")), TEXT("T_WW2_Buildings_Airfield.png") },
+			{ FName(TEXT("RTS.Command.Build.AntiAircraftEmplacement")), TEXT("T_WW2_Units_Germany_20.png") },
+			{ FName(TEXT("RTS.Command.Build.AntiTankBunker")), TEXT("T_WW2_Units_Germany_18.png") },
+			{ FName(TEXT("RTS.Command.Build.AntiTankObstacle")), TEXT("T_WW2_Buildings_TankTrap.png") },
+			{ FName(TEXT("RTS.Command.Build.BarbedWire")), TEXT("T_WW2_Buildings_BarbedWire.png") },
+			{ FName(TEXT("RTS.Command.Build.Barracks")), TEXT("T_WW2_Buildings_Barracks.png") },
+			{ FName(TEXT("RTS.Command.Build.CoastalBattery")), TEXT("T_WW2_Units_Germany_22.png") },
+			{ FName(TEXT("RTS.Command.Build.Factory")), TEXT("T_WW2_Buildings_Factory.png") },
+			{ FName(TEXT("RTS.Command.Build.FieldCover")), TEXT("T_WW2_Buildings_Sandbags.png") },
+			{ FName(TEXT("RTS.Command.Build.GarrisonBunker")), TEXT("T_WW2_Buildings_Bunker.png") },
+			{ FName(TEXT("RTS.Command.Build.IndustrialPark")), TEXT("T_WW2_Buildings_IndustrialPark.png") },
+			{ FName(TEXT("RTS.Command.Build.MachineGunBunker")), TEXT("T_WW2_Units_Germany_03.png") },
+			{ FName(TEXT("RTS.Command.Build.MortarBunker")), TEXT("T_WW2_Units_Germany_19.png") },
+			{ FName(TEXT("RTS.Command.Build.Refinery")), TEXT("T_WW2_Buildings_Refinery.png") },
+			{ FName(TEXT("RTS.Command.Build.ResearchCenter")), TEXT("T_WW2_Buildings_ResearchCenter.png") },
+			{ FName(TEXT("RTS.Command.Build.Shipyard")), TEXT("T_WW2_Buildings_Shipyard.png") },
+			{ FName(TEXT("RTS.Command.Build.TankFactory")), TEXT("T_WW2_Buildings_TankFactory.png") },
+			{ FName(TEXT("RTS.Command.Build.University")), TEXT("T_WW2_Buildings_University.png") },
+			{ FName(TEXT("RTS.Command.Build.VehicleDepot")), TEXT("T_WW2_Buildings_VehicleFactory.png") },
+			{ FName(TEXT("RTS.Command.Build.VehicleFactory")), TEXT("T_WW2_Buildings_VehicleFactory.png") },
+			{ FName(TEXT("RTS.Command.City.EstablishCapital")), TEXT("T_WW2_Government_Capital.png") },
+			{ FName(TEXT("RTS.Command.City.Transfer")), TEXT("T_WW2_Government_TransferCity.png") },
+			{ FName(TEXT("RTS.Command.Decision.OpenPanel")), TEXT("T_WW2_Government_Decision.png") },
+			{ FName(TEXT("RTS.Command.Headquarters.Advisor.Enterprise")), TEXT("T_WW2_Government_EconomicAdvisor.png") },
+			{ FName(TEXT("RTS.Command.Headquarters.Advisor.Military")), TEXT("T_WW2_Government_MilitaryAdvisor.png") },
+			{ FName(TEXT("RTS.Command.Headquarters.Advisor.Political")), TEXT("T_WW2_Government_PoliticalAdvisor.png") },
+			{ FName(TEXT("RTS.Command.Headquarters.Diplomacy.Bad")), TEXT("T_WW2_Government_DeclareWar.png") },
+			{ FName(TEXT("RTS.Command.Headquarters.Diplomacy.CycleTarget")), TEXT("T_WW2_Government_DiplomaticTarget.png") },
+			{ FName(TEXT("RTS.Command.Headquarters.Diplomacy.Good")), TEXT("T_WW2_Government_Alliance.png") },
+			{ FName(TEXT("RTS.Command.Headquarters.Focus.Menu")), TEXT("T_WW2_Government_Decision.png") },
+			{ FName(TEXT("RTS.Command.Headquarters.Focus.MilitaryTechnology.Menu")), TEXT("T_WW2_Government_MilitaryFocus.png") },
+			{ FName(TEXT("RTS.Command.Headquarters.Focus.PoliticalEconomy.Menu")), TEXT("T_WW2_Government_PoliticalFocus.png") },
+			{ FName(TEXT("RTS.Command.Headquarters.PlayerSkill")), TEXT("T_WW2_Government_GovernmentSkill.png") },
+			{ FName(TEXT("RTS.Command.Headquarters.SelectCities")), TEXT("T_WW2_Government_Cities.png") },
+			{ FName(TEXT("RTS.Command.Headquarters.SelectFactories")), TEXT("T_WW2_Government_Factories.png") },
+			{ FName(TEXT("RTS.Command.Headquarters.TechAcceleration")), TEXT("T_WW2_Government_TechAcceleration.png") },
+			{ FName(TEXT("RTS.Command.Market.OpenForeignUnits")), TEXT("T_WW2_Buildings_ArmsMarket.png") },
+			{ FName(TEXT("RTS.Command.Menu.Back")), TEXT("T_WW2_Commands_Back.png") },
+			{ FName(TEXT("RTS.Command.Menu.Build.Defense")), TEXT("T_WW2_Buildings_Bunker.png") },
+			{ FName(TEXT("RTS.Command.Menu.Build.Production")), TEXT("T_WW2_Buildings_TankFactory.png") },
+			{ FName(TEXT("RTS.Command.Navy.OpenProduction")), TEXT("T_WW2_Buildings_Shipyard.png") },
+			{ FName(TEXT("RTS.Command.Structure.Upgrade")), TEXT("T_WW2_Government_TechAcceleration.png") },
+			{ FName(TEXT("RTS.Command.Train.AntiAirI")), TEXT("T_WW2_Units_Japan_22.png") },
+			{ FName(TEXT("RTS.Command.Train.AntiAirII")), TEXT("T_WW2_Units_Japan_22.png") },
+			{ FName(TEXT("RTS.Command.Train.AntiTankGunI")), TEXT("T_WW2_Units_Germany_18.png") },
+			{ FName(TEXT("RTS.Command.Train.AntiTankGunII")), TEXT("T_WW2_Units_Germany_18.png") },
+			{ FName(TEXT("RTS.Command.Train.AntiTankGunIII")), TEXT("T_WW2_Units_Germany_18.png") },
+			{ FName(TEXT("RTS.Command.Train.ArmoredPersonnelCarrier")), TEXT("T_WW2_Units_Germany_14.png") },
+			{ FName(TEXT("RTS.Command.Train.ArmoredVehicle")), TEXT("T_WW2_Units_Germany_13.png") },
+			{ FName(TEXT("RTS.Command.Train.AssaultGun")), TEXT("T_WW2_Units_Germany_17.png") },
+			{ FName(TEXT("RTS.Command.Train.HeavyTankI")), TEXT("T_WW2_Units_Germany_16.png") },
+			{ FName(TEXT("RTS.Command.Train.HeavyTankII")), TEXT("T_WW2_Units_Germany_16.png") },
+			{ FName(TEXT("RTS.Command.Train.HeavyTankIII")), TEXT("T_WW2_Units_Germany_16.png") },
+			{ FName(TEXT("RTS.Command.Train.LandingVehicle")), TEXT("T_WW2_Units_Germany_14.png") },
+			{ FName(TEXT("RTS.Command.Train.MachineGunTank")), TEXT("T_WW2_Units_Japan_05.png") },
+			{ FName(TEXT("RTS.Command.Train.MainBattleTank")), TEXT("T_WW2_Units_Germany_15.png") },
+			{ FName(TEXT("RTS.Command.Train.MediumTankI")), TEXT("T_WW2_Units_Japan_06.png") },
+			{ FName(TEXT("RTS.Command.Train.MediumTankII")), TEXT("T_WW2_Units_Germany_15.png") },
+			{ FName(TEXT("RTS.Command.Train.MediumTankIII")), TEXT("T_WW2_Units_Germany_15.png") },
+			{ FName(TEXT("RTS.Command.Train.Militia")), TEXT("T_WW2_Units_Germany_01.png") },
+			{ FName(TEXT("RTS.Command.Train.MissileVehicle")), TEXT("T_WW2_Units_Germany_23.png") },
+			{ FName(TEXT("RTS.Command.Train.Officer")), TEXT("T_WW2_Units_Germany_11.png") },
+			{ FName(TEXT("RTS.Command.Train.OldTank")), TEXT("T_WW2_Units_Japan_05.png") },
+			{ FName(TEXT("RTS.Command.Train.RocketArtilleryI")), TEXT("T_WW2_Units_Germany_23.png") },
+			{ FName(TEXT("RTS.Command.Train.RocketArtilleryII")), TEXT("T_WW2_Units_Japan_09.png") },
+			{ FName(TEXT("RTS.Command.Train.SelfPropelledArtillery105")), TEXT("T_WW2_Units_Germany_17.png") },
+			{ FName(TEXT("RTS.Command.Train.SelfPropelledArtillery125")), TEXT("T_WW2_Units_Germany_17.png") },
+			{ FName(TEXT("RTS.Command.Train.SelfPropelledArtillery155")), TEXT("T_WW2_Units_Germany_17.png") },
+			{ FName(TEXT("RTS.Command.Train.SuperHeavyTank")), TEXT("T_WW2_Units_Germany_16.png") },
+			{ FName(TEXT("RTS.Command.Train.TankDestroyerI")), TEXT("T_WW2_Units_Japan_07.png") },
+			{ FName(TEXT("RTS.Command.Train.TankDestroyerII")), TEXT("T_WW2_Units_Germany_17.png") },
+			{ FName(TEXT("RTS.Command.Train.TankDestroyerIII")), TEXT("T_WW2_Units_Germany_17.png") },
+		};
+		if (const TCHAR* const* FileName = AuthoredIcons.Find(TagName))
+		{
+			return *FileName;
+		}
+		const FString TagString = TagName.ToString();
+		if (TagString.StartsWith(TEXT("RTS.Command.Headquarters.Focus.Page.PoliticalEconomy.")))
+		{
+			return TEXT("T_WW2_Government_PoliticalFocus.png");
+		}
+		if (TagString.StartsWith(TEXT("RTS.Command.Headquarters.Focus.Page.MilitaryTechnology.")))
+		{
+			return TEXT("T_WW2_Government_MilitaryFocus.png");
+		}
+		if (TagString.StartsWith(TEXT("RTS.Command.Headquarters.Focus.Page.")))
+		{
+			return TEXT("T_WW2_Government_Decision.png");
 		}
 
 		// Unknown commands deliberately have no substitute artwork. Their button uses
@@ -392,7 +487,8 @@ void URTSCommanderGridWidget::InitGridSlots()
     }
 
 	CommandGridPanel->ClearChildren();
-	GridButtons.Empty();
+	GridButtons.Init(nullptr, CommandGridSlotCount);
+	GridSlots.Reset();
 
 	CommandGridPanel->SetSlotPadding(SlotPadding);
 	CommandGridPanel->SetMinDesiredSlotWidth(FMath::Max(1.0f, ButtonSize.X));
@@ -403,23 +499,14 @@ void URTSCommanderGridWidget::InitGridSlots()
 	{
 		for (int32 Col = 0; Col < CommandGridColumns; ++Col)
 		{
-			URTSCommandButtonWidget* Btn = CreateWidget<URTSCommandButtonWidget>(this, ButtonParams);
-			if (Btn)
-			{
-				UUniformGridSlot* GridSlot = CommandGridPanel->AddChildToUniformGrid(Btn, Row, Col);
-				if (GridSlot)
-				{
-					GridSlot->SetHorizontalAlignment(EHorizontalAlignment::HAlign_Fill);
-					GridSlot->SetVerticalAlignment(EVerticalAlignment::VAlign_Fill);
-				}
-
-				if (!IsDesignTime())
-                {
-				    Btn->OnCommandClicked.AddDynamic(this, &URTSCommanderGridWidget::OnGridButtonClicked);
-                }
-				Btn->Init(nullptr, nullptr, FKey());
-				GridButtons.Add(Btn); // Index = Row * CommandGridColumns + Col
-			}
+			USizeBox* Cell = WidgetTree->ConstructWidget<USizeBox>();
+			Cell->SetWidthOverride(ButtonSize.X);
+			Cell->SetHeightOverride(ButtonSize.Y);
+			Cell->SetClipping(EWidgetClipping::ClipToBounds);
+			UUniformGridSlot* GridSlot = CommandGridPanel->AddChildToUniformGrid(Cell, Row, Col);
+			GridSlot->SetHorizontalAlignment(HAlign_Fill);
+			GridSlot->SetVerticalAlignment(VAlign_Fill);
+			GridSlots.Add(Cell);
 		}
 	}
 }
@@ -487,15 +574,7 @@ void URTSCommanderGridWidget::RefreshVisuals()
     TArray<URTSCommandButton*> SparseList;
     PopulateSparseButtons(CurrentGridAsset.Get(), SparseList);
     
-    for (int32 i = 0; i < CommandGridSlotCount; ++i)
-    {
-        if (GridButtons.IsValidIndex(i) && GridButtons[i])
-        {
-			GridButtons[i]->Init(SparseList[i], ActiveActorPtr.Get(), GetEffectiveCommandPanelKey(SparseList[i], i));
-        }
-	}
-	RebuildCommandPanelHotkeys();
-	UpdateCommandStateVisuals();
+    RefreshGrid(SparseList);
     UE_LOG(LogTemp, Verbose, TEXT("UI-Grid: Visuals Refreshed."));
 }
 
@@ -542,18 +621,114 @@ void URTSCommanderGridWidget::PopulateSparseButtons(URTSCommandGridAsset* Grid, 
 
 void URTSCommanderGridWidget::RefreshGrid(const TArray<URTSCommandButton*>& Buttons)
 {
-	if (Buttons.Num() != CommandGridSlotCount) return;
+	if (Buttons.Num() != CommandGridSlotCount || GridSlots.Num() != CommandGridSlotCount) return;
 
 	for (int32 i = 0; i < CommandGridSlotCount; ++i)
 	{
-		if (GridButtons.IsValidIndex(i) && GridButtons[i])
-		{
-			GridButtons[i]->Init(Buttons[i], ActiveActorPtr.Get(), GetEffectiveCommandPanelKey(Buttons[i], i));
-		}
+		GridSlots[i]->ClearChildren();
+		GridButtons[i] = nullptr;
+	}
+	FRTSUnitData Owner = LastSelectionView.SingleUnit;
+	Owner.ActorPtr = ActiveActorPtr.Get();
+	for (int32 i = 0; i < CommandGridSlotCount; ++i)
+	{
+		URTSCommandButtonWidget* Button = GetCommandButtonInstance(Buttons[i], Owner);
+		if (!Button || Button->IsProgressItemMode()) continue;
+		Button->Init(Buttons[i], Owner.ActorPtr, GetEffectiveCommandPanelKey(Buttons[i], i));
+		GridSlots[i]->AddChild(Button);
+		GridButtons[i] = Button;
 	}
 
 	RebuildCommandPanelHotkeys();
 	UpdateCommandStateVisuals();
+}
+
+URTSCommandButtonWidget* URTSCommanderGridWidget::GetCommandButtonInstance(
+	URTSCommandButton* Definition, const FRTSUnitData& Owner)
+{
+	if (!Definition || !ButtonParams) return nullptr;
+	const bool bPerOwner = Definition->bIsResearch && !Definition->bRepeatableResearch;
+	for (URTSCommandButtonWidget* Button : CommandButtonInstances)
+		if (Button && Button->GetData() == Definition && (!bPerOwner
+			|| (Button->CommandOwnerEntity == Owner.EntityHandle && Button->ContextActor.Get() == Owner.ActorPtr)))
+			return Button;
+	URTSCommandButtonWidget* Button = CreateWidget<URTSCommandButtonWidget>(this, ButtonParams);
+	if (!Button) return nullptr;
+	if (USizeBox* RootSize = Cast<USizeBox>(Button->WidgetTree->RootWidget))
+	{ RootSize->SetWidthOverride(ButtonSize.X); RootSize->SetHeightOverride(ButtonSize.Y); }
+	Button->CommandOwnerEntity = Owner.EntityHandle;
+	Button->Init(Definition, Owner.ActorPtr, Definition->Hotkey);
+	Button->OnCommandClicked.AddUniqueDynamic(this, &URTSCommanderGridWidget::OnGridButtonClicked);
+	CommandButtonInstances.Add(Button);
+	return Button;
+}
+
+URTSCommandButtonWidget* URTSCommanderGridWidget::AcquireResearchButton(
+	const FRTSTimedCommandInstance& Item, const FRTSUnitData& Owner)
+{
+	if (!Item.InstanceId.IsValid() || !Item.CommandButton || !Item.CommandButton->bIsResearch) return nullptr;
+	if (const TObjectPtr<URTSCommandButtonWidget>* Existing = ResearchButtons.Find(Item.InstanceId))
+	{
+		(*Existing)->InitProgressItem(Item, Owner.ActorPtr, ButtonSize.X);
+		return *Existing;
+	}
+	URTSCommandButtonWidget* Source = GetCommandButtonInstance(Item.CommandButton, Owner);
+	if (!Source) return nullptr;
+	URTSCommandButtonWidget* Button = Source;
+	if (Item.CommandButton->bRepeatableResearch)
+	{
+		Button = DuplicateObject<URTSCommandButtonWidget>(Source, this,
+			MakeUniqueObjectName(this, Source->GetClass(), TEXT("ResearchCopy")));
+		Button->Initialize();
+		Button->Init(Source->GetData(), Owner.ActorPtr, Source->CommandHotkey);
+		Button->bResearchCopy = true;
+		Button->CommandHotkey = Source->CommandHotkey;
+		Button->DefaultButtonStyle = Source->DefaultButtonStyle;
+		Button->bHasDefaultButtonStyle = Source->bHasDefaultButtonStyle;
+		Button->DefaultBackgroundColor = Source->DefaultBackgroundColor;
+		Button->bHasDefaultBackgroundColor = Source->bHasDefaultBackgroundColor;
+	}
+	else
+	{
+		if (Source->IsProgressItemMode()) return nullptr;
+		// Reparent this instance. Its command-card cell stays in place and empty.
+		Source->RemoveFromParent();
+		for (TObjectPtr<URTSCommandButtonWidget>& CardButton : GridButtons)
+			if (CardButton == Source) CardButton = nullptr;
+		RebuildCommandPanelHotkeys();
+	}
+	Button->ProgressOwnerEntity = Owner.EntityHandle;
+	Button->ProgressOwnerActor = Owner.ActorPtr;
+	Button->bReturnOnCancel = false;
+	Button->InitProgressItem(Item, Owner.ActorPtr, ButtonSize.X);
+	ResearchButtons.Add(Item.InstanceId, Button);
+	return Button;
+}
+
+void URTSCommanderGridWidget::ReleaseFinishedResearchButtons(const FRTSUnitData& Owner)
+{
+	bool bChanged = false;
+	for (auto It = ResearchButtons.CreateIterator(); It; ++It)
+	{
+		URTSCommandButtonWidget* Button = It.Value();
+		if (Button->ProgressOwnerEntity != Owner.EntityHandle || Button->ProgressOwnerActor.Get() != Owner.ActorPtr) continue;
+		if (Owner.CommandProgressItems.ContainsByPredicate([&It](const FRTSTimedCommandInstance& Item)
+			{ return Item.InstanceId == It.Key(); })) continue;
+		Button->RemoveFromParent();
+		if (!Button->bResearchCopy && Button->bReturnOnCancel)
+		{
+			// Cancellation moves the original back; it never constructs a replacement.
+			Button->Init(Button->GetData(), Owner.ActorPtr, Button->CommandHotkey);
+		}
+		else
+		{
+			// A queued copy is deleted. A completed one-shot has been consumed.
+			CommandButtonInstances.Remove(Button);
+		}
+		It.RemoveCurrent();
+		bChanged = true;
+	}
+	if (bChanged) RefreshVisuals();
 }
 
 void URTSCommanderGridWidget::OnActorGridChanged()
@@ -653,7 +828,7 @@ void URTSCommanderGridWidget::OnGridButtonClicked(const FGameplayTag& CommandTag
                 // Fallback for actor-less selection (pure Mass entities). Let the button
                 // asset decide first; the default button implementation still routes
                 // ordinary Mass commands through URTSCommandSubsystem.
-                ClickedData->Execute(nullptr);
+                ClickedData->Execute(GetOwningPlayer());
             }
 
 			UpdateCommandStateVisuals();
@@ -806,19 +981,6 @@ void URTSCommanderGridWidget::RebuildCommandPanelHotkeys()
 		CommandPanelInputComponent->KeyBindings.Add(MoveTemp(ReleasedBinding));
 	}
 
-	FInputKeyBinding TabBinding(FInputChord(EKeys::Tab), IE_Pressed);
-	TabBinding.bConsumeInput = true;
-	TabBinding.KeyDelegate.GetDelegateForManualSet().BindLambda([this]()
-	{
-		if (ULocalPlayer* LP = GetOwningLocalPlayer())
-		{
-			if (URTSSelectionSubsystem* Selection = LP->GetSubsystem<URTSSelectionSubsystem>())
-			{
-				Selection->CycleGroup();
-			}
-		}
-	});
-	CommandPanelInputComponent->KeyBindings.Add(MoveTemp(TabBinding));
 }
 
 void URTSCommanderGridWidget::UnregisterCommandPanelHotkeys()

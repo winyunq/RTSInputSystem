@@ -166,12 +166,13 @@ public:
 	UPROPERTY(BlueprintReadWrite, EditAnywhere, Category = "RTSCamera - Edge Scroll Settings")
 	bool enableEdgeScrolling;
 
-	/// 判定为边缘的屏幕占比阈值（百分比）
+	/// 距各视口边缘的触发距离，占该方向尺寸的比例；0.02 表示 2%，0 禁用。
+	/// 鼠标停在区域内持续滚动，越靠近边缘越快；HUD 按钮焦点不影响滚动。
 	UPROPERTY(
 		BlueprintReadWrite,
 		EditAnywhere,
 		Category = "RTSCamera - Edge Scroll Settings",
-		meta=(EditCondition="enableEdgeScrolling")
+		meta=(EditCondition="enableEdgeScrolling", ClampMin="0.0", ClampMax="0.5", UIMin="0.0", UIMax="0.5")
 	)
 	float distanceFromEdgeThreshold;
 
@@ -316,6 +317,9 @@ protected:
 	float desiredZoomLength;
 
 private:
+#if WITH_DEV_AUTOMATION_TESTS
+	friend class FWinyunqSelectionTabInputTest;
+#endif
 	void resolveComponentDependencyPointers();
 	void setupInitialSpringArmState();
 

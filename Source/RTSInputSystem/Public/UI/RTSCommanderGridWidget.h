@@ -47,13 +47,26 @@ protected:
     UPROPERTY(EditAnywhere, Category = "RTS Grid")
     FMargin SlotPadding = FMargin(4.0f);
 
-    // Desired size for buttons (if enforced by logic, though usually WBP controls this)
+    // Button footprint, excluding SlotPadding. Applied to the shared button widget.
     UPROPERTY(EditAnywhere, Category = "RTS Grid")
     FVector2D ButtonSize = FVector2D(144.0f, 144.0f);
 
 	// Internal list of buttons (Keys = Index 0-14)
 	UPROPERTY()
 	TArray<TObjectPtr<URTSCommandButtonWidget>> GridButtons;
+
+	/** Fixed card cells own layout; button instances move independently between parents. */
+	UPROPERTY(Transient)
+	TArray<TObjectPtr<class USizeBox>> GridSlots;
+
+	UPROPERTY(Transient)
+	TArray<TObjectPtr<URTSCommandButtonWidget>> CommandButtonInstances;
+
+	/** Widget ownership only. Timing, capacity and cancellation remain in the existing command providers. */
+	UPROPERTY(Transient)
+	TMap<FGuid, TObjectPtr<URTSCommandButtonWidget>> ResearchButtons;
+
+	URTSCommandButtonWidget* GetCommandButtonInstance(URTSCommandButton* Definition, const FRTSUnitData& Owner);
 
 	// Populate the grid based on data
 	void RefreshGrid(const TArray<URTSCommandButton*>& Buttons);
@@ -148,10 +161,24 @@ public:
     void NotifyButtonHovered(URTSCommandButtonWidget* Btn, URTSCommandButton* Data);
     void NotifyButtonUnhovered(URTSCommandButtonWidget* Btn);
 
-	/** The left activity panel uses the same visual button class, not this grid's widget instances. */
+	/** Both card and queue use this button class. */
 	TSubclassOf<URTSCommandButtonWidget> GetCommandButtonWidgetClass() const
 	{
 		return ButtonParams;
+	}
+
+	FVector2D GetButtonSize() const { return ButtonSize; }
+	FMargin GetSlotPadding() const { return SlotPadding; }
+
+	URTSCommandButtonWidget* AcquireResearchButton(const FRTSTimedCommandInstance& Item, const FRTSUnitData& Owner);
+	void ReleaseFinishedResearchButtons(const FRTSUnitData& Owner);
+
+	URTSCommandButton* FindDisplayedCommandButton(FGameplayTag Tag) const
+	{
+		for (const URTSCommandButtonWidget* Widget : GridButtons)
+			if (Widget && Widget->GetData() && Widget->GetData()->CommandTag == Tag)
+				return Widget->GetData();
+		return nullptr;
 	}
 
 };

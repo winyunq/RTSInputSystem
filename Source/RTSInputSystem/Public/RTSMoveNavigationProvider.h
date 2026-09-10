@@ -7,16 +7,34 @@
 class UWorld;
 class UMassBattleAgentConfigDataAsset;
 
-/** One native AgentsMoveTo batch sharing one navigation source and one goal. */
+/** Command-authoritative navigation scale. Camera/minimap state is resolved by
+ * the issuing client once and carried as this stable hint. */
+enum class ERTSMoveNavigationScale : uint8
+{
+	Auto,
+	Tactical,
+	Strategic
+};
+
+/** One native movement batch sharing one navigation source and one goal. */
 struct RTSINPUTSYSTEM_API FRTSMoveNavigationBatch
 {
 	TArray<FEntityHandle> Entities;
 	FVector Goal = FVector::ZeroVector;
 	FMBMoveNavigation Navigation;
+
+	// Optional strategic city chain, also supplied through Navigation.CustomPaths
+	// for AgentsMoveTo to advance; Goal remains the exact final destination.
+	TArray<FVector> StrategicCityWaypoints;
+	float StrategicCityArrivalRadiusUU = 0.0f;
+	/** Static city-graph component whose ingress direction field owns this batch. */
+	int32 StrategicCityComponentKey = INDEX_NONE;
+	/** First city reached through the shared ingress direction field. */
+	int32 StrategicEntryCityIndex = INDEX_NONE;
 };
 
 // Command-time navigation extension. Implementations build navigation data;
-// AgentsMoveTo remains the sole owner of entity task state and movement mode.
+// Native MoveTo/ChaseAttack tasks retain ownership of targeting and completion.
 class RTSINPUTSYSTEM_API IRTSMoveNavigationProvider
 {
 public:
@@ -25,7 +43,14 @@ public:
 	virtual bool BuildMoveNavigationBatches(
 		const TArray<FEntityHandle>& Entities,
 		const FVector& RequestedGoal,
-		TArray<FRTSMoveNavigationBatch>& OutBatches) = 0;
+		TArray<FRTSMoveNavigationBatch>& OutBatches,
+		ERTSMoveNavigationScale NavigationScale) = 0;
+
+	/** Called after the native MoveTo or ChaseAttack task has published its owner ID. */
+	virtual void OnMoveNavigationBatchActivated(
+		const FRTSMoveNavigationBatch& Batch)
+	{
+	}
 
 	/**
 	 * Projects a complete spawn formation into the unit's legal movement domain.
@@ -57,7 +82,18 @@ public:
 		UObject* WorldContext,
 		const TArray<FEntityHandle>& Entities,
 		const FVector& RequestedGoal,
-		TArray<FRTSMoveNavigationBatch>& OutBatches);
+		TArray<FRTSMoveNavigationBatch>& OutBatches,
+		ERTSMoveNavigationScale NavigationScale =
+			ERTSMoveNavigationScale::Auto);
+	static void NotifyBatchActivated(
+		UObject* WorldContext,
+		const FRTSMoveNavigationBatch& Batch);
+	/** Binds existing terrain navigation after a native ChaseAttack task activates. */
+	static void BindChaseTaskNavigation(
+		UObject* WorldContext,
+		const TArray<FEntityHandle>& Entities,
+		FEntityHandle Target,
+		uint32 ChaseTaskID);
 	static bool ResolveInitialSpawnLocation(
 		UObject* WorldContext,
 		const UMassBattleAgentConfigDataAsset* AgentConfig,

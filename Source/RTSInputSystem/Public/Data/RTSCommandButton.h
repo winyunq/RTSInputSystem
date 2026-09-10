@@ -35,6 +35,14 @@ public:
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Command")
 	FGameplayTag CommandTag;
 
+	/** A running instance of this button replaces weapons/armor with research progress. */
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Command")
+	bool bIsResearch = false;
+
+	/** Repeatable research keeps its command-card button and queues a copy. */
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Command", meta = (EditCondition = "bIsResearch"))
+	bool bRepeatableResearch = false;
+
 	// Does this command require a target location or actor?
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Command")
 	ERTSCommandTargetType TargetType = ERTSCommandTargetType::Instant;

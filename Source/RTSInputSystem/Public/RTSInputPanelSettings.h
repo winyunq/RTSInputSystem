@@ -289,15 +289,15 @@ public:
 	UPROPERTY(Config, EditAnywhere, BlueprintReadOnly, Category = "RTS Formation List", meta = (ClampMin = "1"))
 	int32 FormationListMaxSlots = 10;
 
-	/** Width of each readable control-group card. Defaults to one 128 px selection-grid column. */
+	/** Fixed width of each control-group card; the strip distributes spare width between cards. */
 	UPROPERTY(Config, EditAnywhere, BlueprintReadOnly, Category = "RTS Formation List", meta = (ClampMin = "1"))
-	int32 FormationListSlotWidth = 128;
+	int32 FormationListSlotWidth = 102;
 
 	/** Height of each control-group card. */
 	UPROPERTY(Config, EditAnywhere, BlueprintReadOnly, Category = "RTS Formation List", meta = (ClampMin = "1"))
 	int32 FormationListSlotHeight = 64;
 
-	/** Vertical gap between wrapped rows. Cards are edge-aligned horizontally with the selection grid. */
+	/** Gap below the fixed control-group strip. Horizontal gaps are derived from the panel width. */
 	UPROPERTY(Config, EditAnywhere, BlueprintReadOnly, Category = "RTS Formation List", meta = (ClampMin = "0"))
 	float FormationListSlotGap = 4.0f;
 

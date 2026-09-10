@@ -21,7 +21,11 @@
 #include "Components/MassBattleAgentComponent.h"
 #include "DataAssets/MassBattleAgentConfigDataAsset.h"
 #include "Fragments/Health.h"
+#include "Fragments/Attack.h"
+#include "Fragments/Damage.h"
+#include "Fragments/Defence.h"
 #include "Fragments/Network.h"
+#include "Fragments/Select.h"
 #include "Fragments/SubType.h"
 #include "Fragments/Team.h"
 #include "Fragments/Transform.h"
@@ -521,6 +525,18 @@ namespace
 		return Texture.IsNull() ? nullptr : Texture.LoadSynchronous();
 	}
 
+	void ReadCombatStats(FRTSUnitData& Data, const FAttack* Attack, const FDamage* Damage, const FDefence* Defence)
+	{
+		Data.bHasWeapon = Attack && Attack->bEnable;
+		if (Data.bHasWeapon)
+		{
+			Data.WeaponDamage = Damage ? Damage->Damage : 0.0f;
+			Data.WeaponRange = Attack->Range;
+			Data.WeaponPeriod = Attack->CoolDown;
+		}
+		Data.ArmorReduction = Defence && Defence->bEnable ? Defence->NormalDmgImmune : 0.0f;
+	}
+
 	void EnsureSelectionDataDefaults(FRTSUnitData& Data, int32 SubTypeIndex, uint32 IconSeed)
 	{
 		if (Data.Name.TrimStartAndEnd().IsEmpty())
@@ -548,6 +564,25 @@ namespace
 				? GetDefaultMassSubtypeRole(SubTypeIndex)
 				: TEXT("Combat Unit");
 		}
+
+		const TPair<const TCHAR*, const TCHAR*> Categories[] = {
+			{TEXT("RTS.Selection.Army.Ground.Armor"), TEXT("坦克")},
+			{TEXT("RTS.Selection.Army.Ground.Infantry"), TEXT("步兵")},
+			{TEXT("RTS.Selection.Army.Ground.Artillery"), TEXT("火炮")},
+			{TEXT("RTS.Selection.Army.Air"), TEXT("飞机")},
+			{TEXT("RTS.Selection.Army.Naval"), TEXT("舰船")},
+			{TEXT("RTS.Selection.Structure"), TEXT("建筑")}
+		};
+		Data.UnitCategory = Data.Role;
+		for (const auto& Category : Categories)
+		{
+			const FGameplayTag Tag = FGameplayTag::RequestGameplayTag(FName(Category.Key), false);
+			if (Tag.IsValid() && Data.SelectionTags.HasTag(Tag))
+			{ Data.UnitCategory = Category.Value; break; }
+		}
+		const FGameplayTag Army = FGameplayTag::RequestGameplayTag(TEXT("RTS.Selection.Army"), false);
+		if (Data.OrganizationLabel.IsEmpty() && Army.IsValid() && Data.SelectionTags.HasTag(Army))
+			Data.OrganizationLabel = TEXT("单兵");
 
 		if (Data.AnnouncerId.IsNone())
 		{
@@ -702,6 +737,18 @@ namespace
 		{
 			return NewObject<URTSCmd_BuildDefense>(Outer);
 		}
+		if (TagName == FName(TEXT("RTS.Command.Build.GarrisonBunker")))
+		{
+			return NewObject<URTSCmd_BuildGarrisonBunker>(Outer);
+		}
+		if (TagName == FName(TEXT("RTS.Command.Build.MortarBunker")))
+		{
+			return NewObject<URTSCmd_BuildMortarBunker>(Outer);
+		}
+		if (TagName == FName(TEXT("RTS.Command.Build.CoastalBattery")))
+		{
+			return NewObject<URTSCmd_BuildCoastalBattery>(Outer);
+		}
 		if (TagName == FName(TEXT("RTS.Command.Build.FieldCover")))
 		{
 			return NewObject<URTSCmd_BuildFieldCover>(Outer);
@@ -837,9 +884,9 @@ namespace
 			const FName CommandName = Button->CommandTag.GetTagName();
 			if (CommandName == FName(TEXT("RTS.Command.Build.FieldCover")))
 			{
-				Button->PreferredIndex = 0;
-				Button->DisplayName = FText::FromString(TEXT("沙袋堑壕"));
-				Button->Hotkey = EKeys::Q;
+				Button->PreferredIndex = 10;
+				Button->DisplayName = FText::FromString(TEXT("沙袋"));
+				Button->Hotkey = EKeys::Z;
 			}
 			else if (CommandName == FName(TEXT("RTS.Command.Build.MachineGunBunker")))
 			{
@@ -855,15 +902,15 @@ namespace
 			}
 			else if (CommandName == FName(TEXT("RTS.Command.Build.AntiAircraftEmplacement")))
 			{
-				Button->PreferredIndex = 3;
-				Button->DisplayName = FText::FromString(TEXT("防空炮阵地"));
-				Button->Hotkey = EKeys::R;
+				Button->PreferredIndex = 5;
+				Button->DisplayName = FText::FromString(TEXT("防空"));
+				Button->Hotkey = EKeys::A;
 			}
 			else if (CommandName == FName(TEXT("RTS.Command.Build.AntiTankObstacle")))
 			{
-				Button->PreferredIndex = 10;
+				Button->PreferredIndex = 12;
 				Button->DisplayName = FText::FromString(TEXT("反坦克陷阱"));
-				Button->Hotkey = EKeys::Z;
+				Button->Hotkey = EKeys::C;
 			}
 			else if (CommandName == FName(TEXT("RTS.Command.Build.BarbedWire")))
 			{
@@ -1175,7 +1222,8 @@ bool URTSSelectionSubsystem::IsEntityControllable(const FEntityHandle& Handle) c
 	}
 
 	const FTeam* Team = EntityManager.GetFragmentDataPtr<FTeam>(NativeHandle);
-	return Team && Team->index == PlayerTeamIndex;
+	const FSelect* Select = EntityManager.GetFragmentDataPtr<FSelect>(NativeHandle);
+	return Team && Team->index == PlayerTeamIndex && (!Select || Select->bEnable);
 }
 
 bool URTSSelectionSubsystem::IsActorControllable(const AActor* Actor) const
@@ -2528,6 +2576,8 @@ FRTSUnitData URTSSelectionSubsystem::CreateUnitDataFromActor(AActor* Actor) cons
 				// The avatar consumes the unit type asset and creates its own single
 				// representative entity; it never captures this battlefield actor.
 				Data.UnitAssetPath = MassAgent->AgentConfigAsset->GetPathName();
+				ReadCombatStats(Data, &MassAgent->AgentConfigAsset->Attack,
+					&MassAgent->AgentConfigAsset->Damage, &MassAgent->AgentConfigAsset->Defence);
 			}
 		}
 
@@ -2635,6 +2685,8 @@ FRTSUnitData URTSSelectionSubsystem::CreateUnitDataFromEntity(const FEntityHandl
 						Data.MaxHealth = Health->Maximum;
 					}
 
+					ReadCombatStats(Data, EM.GetFragmentDataPtr<FAttack>(NativeHandle),
+						EM.GetFragmentDataPtr<FDamage>(NativeHandle), EM.GetFragmentDataPtr<FDefence>(NativeHandle));
 					EnsureSelectionDataDefaults(Data, SubTypeIndex, static_cast<uint32>(SubTypeIndex));
 					OnEnrichMassUnitData().Broadcast(World, Handle, Data);
                     return Data;
@@ -2702,7 +2754,11 @@ void URTSSelectionSubsystem::IssueCommand(FGameplayTag CommandTag)
 	}
 }
 
-void URTSSelectionSubsystem::IssueCommandWithLocation(FGameplayTag CommandTag, FVector Location, bool bQueue)
+void URTSSelectionSubsystem::IssueCommandWithLocation(
+	FGameplayTag CommandTag,
+	FVector Location,
+	bool bQueue,
+	bool bForceStrategicNavigation)
 {
     UE_LOG(LogTemp, Log, TEXT("RTSSelectionSubsystem: Command %s Issued with Location %s (Queue=%d)"),
 		*CommandTag.ToString(), *Location.ToString(), bQueue);
@@ -2733,7 +2789,11 @@ void URTSSelectionSubsystem::IssueCommandWithLocation(FGameplayTag CommandTag, F
             {
                 if (URTSCommandSubsystem* SignalHub = LP->GetSubsystem<URTSCommandSubsystem>())
                 {
-                    SignalHub->IssueCommandWithLocation(CommandTag, Location, bQueue);
+                    SignalHub->IssueCommandWithLocation(
+						CommandTag,
+						Location,
+						bQueue,
+						bForceStrategicNavigation);
                 }
             }
         }

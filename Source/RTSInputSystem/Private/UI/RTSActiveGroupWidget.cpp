@@ -11,7 +11,6 @@
 #include "Components/SizeBox.h"
 #include "Engine/TextureRenderTarget2D.h"
 #include "Engine/World.h"
-#include "Fragments/Collider.h"
 #include "Fragments/RenderBatchData.h"
 #include "Fragments/Render.h"
 #include "Fragments/Transform.h"
@@ -615,20 +614,9 @@ bool URTSActiveGroupWidget::UpdatePortraitPreview()
 		FName("User.LogicTickTime"),
 		GetWorld() ? GetWorld()->GetTimeSeconds() : 0.0f);
 
-	FBoxSphereBounds PreviewBounds = Renderer->AgentMesh->GetBounds().TransformBy(
+	// Frame the rendered model independently of its gameplay collision shape.
+	const FBoxSphereBounds PreviewBounds = Renderer->AgentMesh->GetBounds().TransformBy(
 		FTransform(PreviewRenderRotation, PreviewRenderLocation, PreviewScale));
-	// VAT mesh bounds contain all animation frames. Frame the actual unit,
-	// using the same collider dimensions as the gallery's unit framing.
-	if (const FCollider* Collider = MassAPI->GetFragmentPtr<FCollider>(PortraitSourceEntity))
-	{
-		const FScaling* Scaling = MassAPI->GetFragmentPtr<FScaling>(PortraitSourceEntity);
-		const float UnitScale = Scaling ? Scaling->Scale : PreviewScale.GetAbsMax();
-		const float Radius = FMath::Max(0.1f, Collider->Radius * UnitScale);
-		const float HalfHeight = FMath::Max(Radius,
-			(Collider->Radius + Collider->Height * 0.5f) * UnitScale);
-		PreviewBounds = FBoxSphereBounds(PreviewStageLocation,
-			FVector(Radius, Radius, HalfHeight), HalfHeight);
-	}
 	const FVector BoundsExtent = PreviewBounds.BoxExtent.ComponentMax(FVector(0.1));
 
 	const float HalfFovRadians = FMath::DegreesToRadians(
