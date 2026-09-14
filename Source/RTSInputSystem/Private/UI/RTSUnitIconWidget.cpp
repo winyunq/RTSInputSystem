@@ -12,6 +12,8 @@
 #include "Components/VerticalBox.h"
 #include "Engine/LocalPlayer.h"
 #include "GameFramework/PlayerController.h"
+#include "Engine/World.h"
+#include "Subsystems/MassBattleSubsystem.h"
 
 namespace
 {
@@ -169,6 +171,7 @@ void URTSUnitIconWidget::NativeOnInitialized()
 void URTSUnitIconWidget::NativeConstruct()
 {
 	Super::NativeConstruct();
+	BindUnitUpdates();
 
 	if (UnitSlotFrame)
 	{
@@ -183,6 +186,119 @@ void URTSUnitIconWidget::NativeConstruct()
 	{
 		UE_LOG(LogTemp, Log, TEXT("RTSUnitIconWidget: NativeConstruct - UnitIcon is bound."));
 	}
+}
+
+void URTSUnitIconWidget::NativeDestruct()
+{
+	ULocalPlayer* LocalPlayer = GetOwningLocalPlayer();
+	if (!LocalPlayer && GetWorld()) LocalPlayer = GetWorld()->GetFirstLocalPlayerFromController();
+	if (URTSSelectionSubsystem* Selection = LocalPlayer ? LocalPlayer->GetSubsystem<URTSSelectionSubsystem>() : nullptr)
+	{
+		Selection->OnCommandProgressChanged.Remove(CommandProgressChangedHandle);
+		Selection->OnUnitHealthChanged.Remove(UnitHealthChangedHandle);
+	}
+	CommandProgressChangedHandle.Reset();
+	UnitHealthChangedHandle.Reset();
+	Super::NativeDestruct();
+}
+
+void URTSUnitIconWidget::NativeTick(const FGeometry& MyGeometry, float InDeltaTime)
+{
+	Super::NativeTick(MyGeometry, InDeltaTime);
+	if (IsVisible() && StoredData.bHasActivity
+		&& (!SummaryMembers.IsEmpty() || !StoredData.CommandProgressItems.IsEmpty())) UpdateActivity();
+}
+
+void URTSUnitIconWidget::BindUnitUpdates()
+{
+	ULocalPlayer* LocalPlayer = GetOwningLocalPlayer();
+	if (!LocalPlayer && GetWorld()) LocalPlayer = GetWorld()->GetFirstLocalPlayerFromController();
+	URTSSelectionSubsystem* Selection = LocalPlayer ? LocalPlayer->GetSubsystem<URTSSelectionSubsystem>() : nullptr;
+	if (!Selection) return;
+	if (!UnitHealthChangedHandle.IsValid())
+		UnitHealthChangedHandle = Selection->OnUnitHealthChanged.AddUObject(
+			this, &URTSUnitIconWidget::OnUnitHealthChanged);
+	const bool bHasProvider = bShowStatusBars && (SummaryMembers.IsEmpty() ? StoredData.GetProgressProvider() != nullptr
+		: SummaryMembers.ContainsByPredicate([](const FRTSUnitData& Member) { return Member.GetProgressProvider() != nullptr; }));
+	if (!bHasProvider)
+	{
+		Selection->OnCommandProgressChanged.Remove(CommandProgressChangedHandle);
+		CommandProgressChangedHandle.Reset();
+	}
+	else if (!CommandProgressChangedHandle.IsValid())
+		CommandProgressChangedHandle = Selection->OnCommandProgressChanged.AddUObject(
+			this, &URTSUnitIconWidget::OnCommandProgressChanged);
+}
+
+void URTSUnitIconWidget::OnCommandProgressChanged(UObject* ProgressProvider, FName SourceId, FGuid ResolvedId, bool bCancelled)
+{
+	bool bChanged = false;
+	if (SummaryMembers.IsEmpty())
+	{
+		if (StoredData.MatchesProgressSource(ProgressProvider, SourceId)) bChanged = StoredData.RefreshCommandProgress();
+	}
+	else
+	{
+		for (FRTSUnitData& Member : SummaryMembers)
+			if (Member.MatchesProgressSource(ProgressProvider, SourceId)) bChanged |= Member.RefreshCommandProgress();
+	}
+	if (!bChanged) return;
+	UpdateActivity();
+	UpdateTooltip(StoredData);
+}
+
+void URTSUnitIconWidget::OnUnitHealthChanged(
+	const FEntityHandle& Entity, float CurrentHealth, float MaximumHealth)
+{
+	for (FRTSUnitData& Member : SummaryMembers)
+		if (Member.bIsMassEntity && Member.EntityHandle == Entity)
+		{
+			Member.Health = CurrentHealth;
+			Member.MaxHealth = MaximumHealth;
+		}
+	if (!StoredData.bIsMassEntity || StoredData.EntityHandle != Entity) return;
+	if (StoredData.Health == CurrentHealth && StoredData.MaxHealth == MaximumHealth) return;
+	StoredData.Health = CurrentHealth;
+	StoredData.MaxHealth = MaximumHealth;
+	if (bShowStatusBars) UpdateBar(HealthBar, CurrentHealth, MaximumHealth);
+	UpdateTooltip(StoredData);
+}
+
+void URTSUnitIconWidget::UpdateActivity()
+{
+	if (!bShowStatusBars) return;
+	const UMassBattleSubsystem* Battle = UMassBattleSubsystem::GetPtr(this);
+	const int32 CurrentTick = Battle ? Battle->GetTickCount() : INDEX_NONE;
+	const auto ProjectActivity = [CurrentTick](FRTSUnitData& Data)
+	{
+		const FRTSTimedCommandInstance* Item = Data.CommandProgressItems.FindByPredicate(
+			[](const FRTSTimedCommandInstance& Candidate) { return Candidate.State != ERTSTimedCommandState::Queued; });
+		if (Item)
+		{
+			Data.ActivityProgress = Item->GetProgress01AtTick(CurrentTick);
+			Data.ActivityRemainingSeconds = Item->DurationSeconds * (1.0f - Data.ActivityProgress);
+		}
+	};
+	if (SummaryMembers.IsEmpty()) ProjectActivity(StoredData);
+	else
+	{
+		TMap<FString, FRTSUnitData> Groups;
+		for (FRTSUnitData& Member : SummaryMembers)
+		{
+			ProjectActivity(Member);
+			URTSSelectionSubsystem::AddOrUpdateSummaryGroup(Groups, Member);
+		}
+		if (const FRTSUnitData* Group = Groups.Find(GetUnitIconGroupKey(StoredData))) StoredData = *Group;
+	}
+	UProgressBar* EffectiveActivityBar = ActivityBar;
+	if (!EffectiveActivityBar && StoredData.MaxShield <= 0.0f) EffectiveActivityBar = ShieldBar;
+	if (EffectiveActivityBar)
+	{
+		EffectiveActivityBar->SetPercent(FMath::Clamp(StoredData.ActivityProgress, 0.0f, 1.0f));
+		EffectiveActivityBar->SetVisibility(StoredData.bHasActivity
+			? ESlateVisibility::HitTestInvisible : ESlateVisibility::Collapsed);
+	}
+	if (ActivityText) ActivityText->SetVisibility(ESlateVisibility::Collapsed);
 }
 
 void URTSUnitIconWidget::InitData(const FRTSUnitData& Data, bool bShowIcon, bool bShowBars, bool bShowCount, int32 DesiredIconSize)
@@ -256,19 +372,6 @@ void URTSUnitIconWidget::InitData(const FRTSUnitData& Data, bool bShowIcon, bool
 		if(ShieldBar) ShieldBar->SetVisibility(ESlateVisibility::Collapsed);
 	}
 
-	if (EffectiveActivityBar)
-	{
-		EffectiveActivityBar->SetPercent(FMath::Clamp(Data.ActivityProgress, 0.0f, 1.0f));
-		EffectiveActivityBar->SetVisibility(Data.bHasActivity
-			? ESlateVisibility::HitTestInvisible
-			: ESlateVisibility::Collapsed);
-	}
-
-	if (ActivityText)
-	{
-		ActivityText->SetVisibility(ESlateVisibility::Collapsed);
-	}
-
 	if (CancelHintText)
 	{
 		CancelHintText->SetVisibility(ESlateVisibility::Collapsed);
@@ -295,8 +398,23 @@ void URTSUnitIconWidget::InitData(const FRTSUnitData& Data, bool bShowIcon, bool
 
 	// Store for Interaction
 	StoredData = Data;
-
-	UpdateTooltip(Data);
+	bShowStatusBars = bShowBars;
+	SummaryMembers.Reset();
+	if (Data.Count > 1)
+	{
+		ULocalPlayer* LocalPlayer = GetOwningLocalPlayer();
+		if (!LocalPlayer && GetWorld()) LocalPlayer = GetWorld()->GetFirstLocalPlayerFromController();
+		if (URTSSelectionSubsystem* Selection = LocalPlayer ? LocalPlayer->GetSubsystem<URTSSelectionSubsystem>() : nullptr)
+			SummaryMembers = Selection->GetUnitGroupMembers(GetUnitIconGroupKey(Data));
+	}
+	BindUnitUpdates();
+	if (bShowStatusBars)
+	{
+		if (SummaryMembers.IsEmpty()) StoredData.RefreshCommandProgress();
+		else for (FRTSUnitData& Member : SummaryMembers) Member.RefreshCommandProgress();
+	}
+	UpdateActivity();
+	UpdateTooltip(StoredData);
 }
 
 void URTSUnitIconWidget::SetIsActive(bool bActive)
@@ -348,10 +466,11 @@ void URTSUnitIconWidget::UpdateTooltip(const FRTSUnitData& Data)
 	// its existing tooltip content current without constructing a new widget.
 	if (UnitTooltipWidget)
 	{
+		FRTSCommandState Detail;
+		Detail.Description = FText::FromString(BuildUnitTooltipDescription(Data));
 		UnitTooltipWidget->SetTooltipContent(
 			FText::FromString(Data.Name),
-			FText::FromString(BuildUnitTooltipDescription(Data)),
-			FText::GetEmpty(),
+			Detail,
 			Data.Icon
 		);
 	}

@@ -33,6 +33,13 @@ public:
 		bRepeatableResearch = true;
 	}
 
+    /** Conditions belong to the command definition, independent of its button appearance. */
+    UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Production|Requirements")
+    TObjectPtr<URTSCommandRequirementAsset> CommandRequirementDefinition;
+
+    UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Production|Requirements")
+    FRTSCommandRequirements CommandRequirements;
+
 	/** Stable identifier copied into the concrete production definition. */
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Production")
 	FName UnitId;

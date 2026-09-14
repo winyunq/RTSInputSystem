@@ -3,13 +3,14 @@
 #include "UI/RTSCommanderGridWidget.h"
 #include "UI/RTSFormationListWidget.h"
 #include "UI/RTSUnitIconWidget.h"
+#include "UI/RTSTooltipWidget.h"
 #include "RTSInputPanelSettings.h"
 #include "RTSSelectionSubsystem.h"
+#include "Subsystems/MassBattleSubsystem.h"
 #include "Engine/World.h"
 #include "Components/PanelWidget.h"
 #include "Components/Image.h"
 #include "Components/TextBlock.h"
-#include "Interfaces/RTSCommandProgressProvider.h"
 #include "Components/ProgressBar.h"
 #include "Components/Border.h"
 #include "Components/BorderSlot.h"
@@ -41,6 +42,20 @@ namespace
 		return Data.GroupKey.IsEmpty() ? Data.Name : Data.GroupKey;
 	}
 
+}
+
+void URTSUnitPanelWidget::NativeTick(const FGeometry& MyGeometry, float InDeltaTime)
+{
+	Super::NativeTick(MyGeometry, InDeltaTime);
+	const UMassBattleSubsystem* Battle = UMassBattleSubsystem::GetPtr(this);
+	const int32 CurrentTick = Battle ? Battle->GetTickCount() : INDEX_NONE;
+	UProgressBar* Bars[] = {ActiveProgress0, ActiveProgress1};
+	for (int32 Index = 0; Index < UE_ARRAY_COUNT(ActiveProgressItems); ++Index)
+	{
+		const FRTSTimedCommandInstance& Item = ActiveProgressItems[Index];
+		if (Item.State != ERTSTimedCommandState::Active || !Bars[Index]) continue;
+		Bars[Index]->SetPercent(Item.GetProgress01AtTick(CurrentTick));
+	}
 }
 
 void URTSUnitPanelWidget::NativePreConstruct()
@@ -436,6 +451,8 @@ void URTSUnitPanelWidget::BuildSelectionGrid(
 void URTSUnitPanelWidget::NativeConstruct()
 {
 	Super::NativeConstruct();
+	HealthValueTextWidget = Cast<UTextBlock>(FindDescendantWidgetByName(this, TEXT("HealthValueText")));
+	HealthBarWidget = Cast<UProgressBar>(FindDescendantWidgetByName(this, TEXT("HealthBar")));
 
 	ApplySelectionPanelLayoutSettings();
 
@@ -477,6 +494,8 @@ void URTSUnitPanelWidget::NativeConstruct()
 					Subsystem->OnCommandProgressChanged.AddUObject(
 						this,
 						&URTSUnitPanelWidget::OnCommandProgressChanged);
+				UnitHealthChangedHandle = Subsystem->OnUnitHealthChanged.AddUObject(
+					this, &URTSUnitPanelWidget::OnUnitHealthChanged);
 				OnControlGroupsUpdated(Subsystem->GetControlGroupsView());
 				if (Subsystem->HasSelectedActors() || Subsystem->HasSelectedMass())
 				{
@@ -497,6 +516,8 @@ void URTSUnitPanelWidget::NativeDestruct()
 		{
 			if (URTSSelectionSubsystem* Subsystem = LP->GetSubsystem<URTSSelectionSubsystem>())
 			{
+				Subsystem->OnUnitHealthChanged.Remove(UnitHealthChangedHandle);
+				UnitHealthChangedHandle.Reset();
 				Subsystem->OnSelectionChanged.RemoveDynamic(this, &URTSUnitPanelWidget::OnSelectionUpdated);
 				Subsystem->OnControlGroupsChanged.RemoveDynamic(this, &URTSUnitPanelWidget::OnControlGroupsUpdated);
 				if (CommandProgressChangedHandle.IsValid())
@@ -514,27 +535,25 @@ void URTSUnitPanelWidget::NativeDestruct()
 
 void URTSUnitPanelWidget::OnSelectionUpdated(const FRTSSelectionView& View)
 {
-	DisplayedProgressProvider = View.Mode == ERTSSelectionMode::Single
-		? View.SingleUnit.ActorPtr
-		: nullptr;
 	RefreshGrid(View);
 }
 
-void URTSUnitPanelWidget::OnCommandProgressChanged(AActor* ProgressProvider)
+void URTSUnitPanelWidget::OnCommandProgressChanged(UObject* ProgressProvider, FName SourceId, FGuid ResolvedId, bool bCancelled)
 {
-	if (!ProgressProvider || DisplayedProgressProvider.Get() != ProgressProvider
-		|| !ProgressProvider->Implements<URTSCommandProgressProvider>()) return;
-	IRTSCommandProgressProvider::Execute_GetCommandProgressItems(
-		ProgressProvider, DisplayedSingleUnitData.CommandProgressItems);
-	const FRTSTimedCommandInstance* Active = DisplayedSingleUnitData.CommandProgressItems.FindByPredicate(
-		[](const FRTSTimedCommandInstance& Item) { return Item.State != ERTSTimedCommandState::Queued; });
-	DisplayedSingleUnitData.bHasActivity = Active != nullptr;
-	DisplayedSingleUnitData.ActivityLabel = Active && Active->CommandButton ? Active->CommandButton->DisplayName : FText::GetEmpty();
-	DisplayedSingleUnitData.ActivityProgress = Active ? Active->GetProgress01() : 0.0f;
-	DisplayedSingleUnitData.ActivityRemainingSeconds = Active ? Active->GetRemainingSeconds() : 0.0f;
-	DisplayedSingleUnitData.ActivityQueueCount = DisplayedSingleUnitData.CommandProgressItems.Num();
+	if (!DisplayedSingleUnitData.MatchesProgressSource(ProgressProvider, SourceId)) return;
+	DisplayedSingleUnitData.RefreshCommandProgress();
 	RefreshSingleUnitActivity(DisplayedSingleUnitData);
-	ShowCommandProgressItems(DisplayedSingleUnitData);
+	ShowCommandProgressItems(DisplayedSingleUnitData, ResolvedId, bCancelled);
+}
+
+void URTSUnitPanelWidget::OnUnitHealthChanged(
+	const FEntityHandle& Entity, float CurrentHealth, float MaximumHealth)
+{
+	if (!DisplayedSingleUnitData.bIsMassEntity || DisplayedSingleUnitData.EntityHandle != Entity) return;
+	if (DisplayedSingleUnitData.Health == CurrentHealth && DisplayedSingleUnitData.MaxHealth == MaximumHealth) return;
+	DisplayedSingleUnitData.Health = CurrentHealth;
+	DisplayedSingleUnitData.MaxHealth = MaximumHealth;
+	RefreshSingleUnitHealth(DisplayedSingleUnitData);
 }
 
 void URTSUnitPanelWidget::OnControlGroupsUpdated(const FRTSControlGroupsView& View)
@@ -605,23 +624,25 @@ void URTSUnitPanelWidget::ShowSingleContent(const FRTSUnitData& Data)
 {
 	HideGridSlots();
 	DisplayedSingleUnitData = Data;
+	DisplayedSingleUnitData.RefreshCommandProgress();
 	SetContentRoute(ERTSSelectionMode::Single);
-	RefreshSingleUnitDetail(Data);
-	ShowCommandProgressItems(Data);
+	RefreshSingleUnitDetail(DisplayedSingleUnitData);
+	ShowCommandProgressItems(DisplayedSingleUnitData);
 }
 
-void URTSUnitPanelWidget::ShowCommandProgressItems(const FRTSUnitData& OwnerData)
+void URTSUnitPanelWidget::ShowCommandProgressItems(const FRTSUnitData& OwnerData, FGuid ResolvedId, bool bCancelled)
 {
-	for (URTSCommandButtonWidget* Button : ProgressButtonSlots)
-		if (Button) Button->SetVisibility(ESlateVisibility::Hidden);
-	ProgressButtonSlots.Reset();
+	for (FRTSTimedCommandInstance& Item : ActiveProgressItems) Item = FRTSTimedCommandInstance();
 	TArray<UUserWidget*> Grids;
 	UWidgetBlueprintLibrary::GetAllWidgetsOfClass(this, Grids, URTSCommanderGridWidget::StaticClass(), false);
 	URTSCommanderGridWidget* CommandGrid = nullptr;
 	for (UUserWidget* Widget : Grids)
 		if (Widget->GetWorld() == GetWorld() && Widget->GetOwningPlayer() == GetOwningPlayer())
 		{ CommandGrid = CastChecked<URTSCommanderGridWidget>(Widget); break; }
-	if (CommandGrid) CommandGrid->ReleaseFinishedResearchButtons(OwnerData);
+	if (CommandGrid) CommandGrid->ReleaseFinishedResearchButtons(OwnerData, ResolvedId, bCancelled);
+	ULocalPlayer* LocalPlayer = GetOwningLocalPlayer();
+	if (!LocalPlayer && GetWorld()) LocalPlayer = GetWorld()->GetFirstLocalPlayerFromController();
+	URTSSelectionSubsystem* Selection = LocalPlayer ? LocalPlayer->GetSubsystem<URTSSelectionSubsystem>() : nullptr;
 	TArray<FRTSTimedCommandInstance> Active, Waiting;
 	for (const FRTSTimedCommandInstance& Source : OwnerData.CommandProgressItems)
 	{
@@ -629,18 +650,33 @@ void URTSUnitPanelWidget::ShowCommandProgressItems(const FRTSUnitData& OwnerData
 		if (CommandGrid)
 			if (URTSCommandButton* Original = CommandGrid->FindDisplayedCommandButton(Item.CommandTag))
 				Item.CommandButton = Original;
-		if (!Item.CommandButton || !Item.CommandButton->bIsResearch) continue;
+		if (!Item.CommandButton && Selection) Item.CommandButton = Selection->FindCommandButton(Item.CommandTag);
+		if (Item.CommandButton && !Item.CommandButton->bIsResearch) continue;
 		(Item.State == ERTSTimedCommandState::Queued ? Waiting : Active).Add(Item);
 	}
+	constexpr int32 ActiveSlots = 2;
+	constexpr int32 QueueSlots = 6;
+	for (URTSCommandButtonWidget* Button : ProgressButtonSlots)
+	{
+		// Cancellation may already have returned this original to its command card.
+		if (!Button || !Button->IsProgressItemMode()) continue;
+		FGuid ItemId;
+		FGuid::ParseExact(Button->GetProgressItemId().ToString(), EGuidFormats::Digits, ItemId);
+		const auto MatchesItem = [ItemId](const FRTSTimedCommandInstance& Item) { return Item.InstanceId == ItemId; };
+		const int32 ActiveIndex = Active.IndexOfByPredicate(MatchesItem);
+		const int32 WaitingIndex = Waiting.IndexOfByPredicate(MatchesItem);
+		const bool bStillDisplayed = (ActiveIndex != INDEX_NONE && ActiveIndex < ActiveSlots)
+			|| (WaitingIndex != INDEX_NONE && WaitingIndex < QueueSlots);
+		if (!bStillDisplayed || !ActivityQueueContainer || !CommandGrid) Button->SetVisibility(ESlateVisibility::Hidden);
+	}
+	ProgressButtonSlots.Reset();
 	const bool bResearch = !Active.IsEmpty() || !Waiting.IsEmpty();
 	if (WeaponArmorPanel) WeaponArmorPanel->SetVisibility(bResearch ? ESlateVisibility::Collapsed : ESlateVisibility::SelfHitTestInvisible);
 	if (UnitRosterPane) UnitRosterPane->SetVisibility(bResearch ? ESlateVisibility::SelfHitTestInvisible : ESlateVisibility::Collapsed);
-	if (ActivityQueueContainer) ActivityQueueContainer->SetVisibility(Waiting.IsEmpty() ? ESlateVisibility::Collapsed : ESlateVisibility::SelfHitTestInvisible);
+	if (ActivityQueueContainer) ActivityQueueContainer->SetVisibility(bResearch ? ESlateVisibility::SelfHitTestInvisible : ESlateVisibility::Collapsed);
 	if (!bResearch || !ActivityQueueContainer || !CommandGrid) return;
 	if (UWidget* Row = FindDescendantWidgetByName(this, TEXT("ActiveProductionRow")))
 		Row->SetVisibility(ESlateVisibility::SelfHitTestInvisible);
-	constexpr int32 ActiveSlots = 2;
-	constexpr int32 QueueSlots = 6;
 	if (EmptyQueueFrames.Num() != QueueSlots)
 	{
 		ActivityQueueContainer->ClearChildren();
@@ -658,9 +694,7 @@ void URTSUnitPanelWidget::ShowCommandProgressItems(const FRTSUnitData& OwnerData
 			URTSCommandButtonWidget* Frame = CreateWidget<URTSCommandButtonWidget>(this, CommandGrid->GetCommandButtonWidgetClass());
 			if (Frame)
 			{
-				Frame->Init(nullptr);
-				FRTSTimedCommandInstance Empty; Empty.bCanCancel = false;
-				Frame->InitProgressItem(Empty, nullptr, SelectionButtonSize.X);
+				Frame->InitEmptyProgressSlot(Index + 1, SelectionButtonSize.X);
 				Cell->AddChild(Frame);
 			}
 			EmptyQueueFrames.Add(Frame);
@@ -703,7 +737,21 @@ void URTSUnitPanelWidget::ShowCommandProgressItems(const FRTSUnitData& OwnerData
 			if (UTextBlock* Status = Cast<UTextBlock>(FindDescendantWidgetByName(this, *FString::Printf(TEXT("ActiveStatus%d"), Position))))
 				Status->SetText(FText::FromString(Item.State == ERTSTimedCommandState::Paused ? TEXT("已暂停") : TEXT("正在研发")));
 			UProgressBar* Progress = Position == 0 ? ActiveProgress0 : ActiveProgress1;
-			if (Progress) Progress->SetPercent(Item.GetProgress01());
+			ActiveProgressItems[Position] = Item;
+			if (Progress)
+			{
+				Progress->SetPercent(Item.GetProgress01());
+				Progress->SetVisibility(ESlateVisibility::Visible);
+				Progress->TakeWidget()->SetToolTipText(TAttribute<FText>::Create(
+					TAttribute<FText>::FGetter::CreateWeakLambda(this, [this, Position]()
+					{
+						const FRTSTimedCommandInstance& Task = ActiveProgressItems[Position];
+						const UMassBattleSubsystem* Battle = UMassBattleSubsystem::GetPtr(this);
+						const float Progress01 = Task.GetProgress01AtTick(Battle ? Battle->GetTickCount() : INDEX_NONE);
+						return FText::FromString(FString::Printf(TEXT("%.1f / %.1f 秒"),
+							Progress01 * Task.DurationSeconds, Task.DurationSeconds));
+					})));
+			}
 		}
 	}
 }
@@ -734,6 +782,7 @@ void URTSUnitPanelWidget::ShowGridContent(const FRTSSelectionView& View)
 
 void URTSUnitPanelWidget::HideGridSlots()
 {
+	for (FRTSTimedCommandInstance& Item : ActiveProgressItems) Item = FRTSTimedCommandInstance();
 	for (URTSCommandButtonWidget* ProgressButton : ProgressButtonSlots)
 		if (ProgressButton) ProgressButton->SetVisibility(ESlateVisibility::Hidden);
 
@@ -807,8 +856,38 @@ void URTSUnitPanelWidget::RefreshSingleUnitDetail(const FRTSUnitData& Data)
 		? FString::Printf(TEXT("基础伤害  %.0f\n射程  %.0f\n冷却  %.1fs"), Data.WeaponDamage, Data.WeaponRange, Data.WeaponPeriod)
 		: TEXT("无武器"));
 	SetOptionalDetailText(TEXT("ArmorStats"), FString::Printf(TEXT("普通伤害减免\n%.0f%%"), Data.ArmorReduction * 100.0f));
-	SetOptionalDetailText(TEXT("HealthValueText"), Data.MaxHealth > 0.0f
-		? FString::Printf(TEXT("%.0f / %.0f"), FMath::Clamp(Data.Health, 0.0f, Data.MaxHealth), Data.MaxHealth) : FString());
+	for (const TCHAR* Part : {TEXT("Weapon"), TEXT("Armor")})
+	{
+		UWidget* Card = FindDescendantWidgetByName(DetailRoot, *FString::Printf(TEXT("%sCard"), Part));
+		if (!Card) continue;
+		URTSTooltipWidget* Tooltip = Cast<URTSTooltipWidget>(Card->GetToolTip());
+		if (!Tooltip)
+		{
+			Tooltip = CreateWidget<URTSTooltipWidget>(this, LoadClass<URTSTooltipWidget>(nullptr,
+				TEXT("/Game/UI/HeadUpDisplay/ControlGird/ButtonMessage.ButtonMessage_C")));
+			Card->SetToolTip(Tooltip);
+		}
+		Card->SetVisibility(ESlateVisibility::Visible);
+		if (Tooltip)
+		{
+			const bool bWeapon = FCString::Strcmp(Part, TEXT("Weapon")) == 0;
+			FRTSCommandState Detail;
+			if (bWeapon && Data.bHasWeapon)
+			{
+				Detail.EffectRows = {
+					{FText::FromString(TEXT("伤害")), FText::AsNumber(Data.WeaponDamage), TEXT("Damage")},
+					{FText::FromString(TEXT("射程")), FText::AsNumber(Data.WeaponRange), TEXT("Range")},
+					{FText::FromString(TEXT("攻击间隔")), FText::Format(FText::FromString(TEXT("{0} s")), FText::AsNumber(Data.WeaponPeriod)), TEXT("ResearchTime")}
+				};
+			}
+			else if (!bWeapon)
+				Detail.EffectRows.Add({FText::FromString(TEXT("普通伤害减免")),
+					FText::AsPercent(Data.ArmorReduction), TEXT("Armor")});
+			else Detail.Description = FText::FromString(TEXT("无武器"));
+			Tooltip->SetTooltipContent(FText::FromString(bWeapon ? TEXT("武器") : TEXT("护甲")), Detail, nullptr);
+		}
+	}
+	RefreshSingleUnitHealth(Data);
 	SetOptionalDetailText(TEXT("UnitRoleText"), Data.Role);
 	SetOptionalDetailText(TEXT("RoleText"), Data.Role);
 	SetOptionalDetailText(TEXT("RoleValue"), Data.Role);
@@ -838,9 +917,24 @@ void URTSUnitPanelWidget::RefreshSingleUnitDetail(const FRTSUnitData& Data)
 		}
 	};
 
-	UpdateProgressBar(Cast<UProgressBar>(FindDescendantWidgetByName(DetailRoot, TEXT("HealthBar"))), Data.Health, Data.MaxHealth);
 	UpdateProgressBar(Cast<UProgressBar>(FindDescendantWidgetByName(DetailRoot, TEXT("EnergyBar"))), Data.Energy, Data.MaxEnergy);
 	UpdateProgressBar(Cast<UProgressBar>(FindDescendantWidgetByName(DetailRoot, TEXT("ShieldBar"))), Data.Shield, Data.MaxShield);
+}
+
+void URTSUnitPanelWidget::RefreshSingleUnitHealth(const FRTSUnitData& Data)
+{
+	const bool bHasHealth = Data.MaxHealth > 0.0f;
+	if (UTextBlock* Text = HealthValueTextWidget.Get())
+	{
+		Text->SetText(bHasHealth ? FText::FromString(FString::Printf(TEXT("%.0f / %.0f"),
+			FMath::Clamp(Data.Health, 0.0f, Data.MaxHealth), Data.MaxHealth)) : FText::GetEmpty());
+		Text->SetVisibility(bHasHealth ? ESlateVisibility::HitTestInvisible : ESlateVisibility::Collapsed);
+	}
+	if (UProgressBar* Bar = HealthBarWidget.Get())
+	{
+		if (bHasHealth) Bar->SetPercent(FMath::Clamp(Data.Health / Data.MaxHealth, 0.0f, 1.0f));
+		Bar->SetVisibility(bHasHealth ? ESlateVisibility::HitTestInvisible : ESlateVisibility::Collapsed);
+	}
 }
 
 void URTSUnitPanelWidget::RefreshSingleUnitActivity(const FRTSUnitData& Data)

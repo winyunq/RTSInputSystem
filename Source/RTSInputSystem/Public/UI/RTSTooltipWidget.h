@@ -11,6 +11,10 @@ class UTextBlock;
 class UImage;
 class UTexture2D;
 class UDataTable;
+class UHorizontalBox;
+class UVerticalBox;
+class USizeBox;
+class URTSCommandButtonWidget;
 
 /**
  * A Rich Tooltip for RTS Commands.
@@ -25,10 +29,13 @@ public:
 
 	// Update Tooltip UI from Data
 	UFUNCTION(BlueprintCallable, Category = "RTS Tooltip")
-	void UpdateTooltip(URTSCommandButton* Data);
+	void UpdateTooltip(URTSCommandButton* Data, AActor* Executor = nullptr, URTSCommandButtonWidget* SourceButton = nullptr);
 
 	UFUNCTION(BlueprintCallable, Category = "RTS Tooltip")
-	void SetTooltipContent(const FText& InTitle, const FText& InDescription, const FText& InCost, UTexture2D* InIcon);
+	void SetTooltipContent(const FText& InTitle, const FRTSCommandState& InState, UTexture2D* InIcon);
+
+	/** Uses the actual host width, including this tooltip's authored padding. */
+	void SetContentWidth(float Width);
 
 protected:
 	virtual TSharedRef<SWidget> RebuildWidget() override;
@@ -40,21 +47,46 @@ protected:
 	TObjectPtr<class URichTextBlock> DescriptionText;
 
 	UPROPERTY(meta = (BindWidgetOptional))
-	TObjectPtr<UTextBlock> CostText; // "100 M / 50 G"
+	TObjectPtr<UHorizontalBox> CostsBox;
+
+	UPROPERTY(meta = (BindWidgetOptional))
+	TObjectPtr<UHorizontalBox> DurationRow;
+
+	UPROPERTY(meta = (BindWidgetOptional))
+	TObjectPtr<UVerticalBox> EffectRowsBox;
+
+	UPROPERTY(meta = (BindWidgetOptional))
+	TObjectPtr<USizeBox> ContentBox;
+
+	UPROPERTY(meta = (BindWidgetOptional))
+	TObjectPtr<UTextBlock> HotkeyText;
+
+	UPROPERTY(meta = (BindWidgetOptional))
+	TObjectPtr<UTextBlock> DurationText;
+
+	UPROPERTY(meta = (BindWidgetOptional))
+	TObjectPtr<class URichTextBlock> RequirementsText;
+
+	UPROPERTY(meta = (BindWidgetOptional))
+	TObjectPtr<UTextBlock> StatusText;
 
 	// Optional icon
     UPROPERTY(meta = (BindWidgetOptional))
 	TObjectPtr<UImage> IconImage;
+
+	/** Authored references are loaded with the widget; hover never imports or searches for art. */
+	UPROPERTY(EditDefaultsOnly, Category = "Style")
+	TMap<FName, TObjectPtr<UTexture2D>> ValueIcons;
 
     // --- Style Config (Start) ---
     UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Style", meta = (ClampMin = "8", ClampMax = "64"))
     int32 DefaultFontSize = 32;
 
     UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Style", meta = (ClampMin = "8", ClampMax = "64"))
-    int32 DescriptionFontSize = 16;
+    int32 DescriptionFontSize = 28;
 
     UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Style", meta = (ClampMin = "8", ClampMax = "64"))
-    int32 CostFontSize = 16;
+    int32 CostFontSize = 28;
 
     UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Style", meta = (ClampMin = "120.0", ClampMax = "800.0"))
     float TooltipWrapTextAt = 512.0f;
@@ -75,4 +107,6 @@ protected:
 
 private:
 	void ApplyConfiguredStyle();
+	void SetCostRows(const TArray<FRTSCommandCost>& Costs);
+	void SetEffectRows(const TArray<FRTSCommandTooltipRow>& Rows);
 };

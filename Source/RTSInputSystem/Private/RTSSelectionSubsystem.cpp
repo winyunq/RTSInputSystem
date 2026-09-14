@@ -53,22 +53,50 @@ void URTSSelectionSubsystem::RequestCommandRefresh()
 }
 
 void URTSSelectionSubsystem::NotifyCommandProgressChanged(
-	AActor* ProgressProvider)
+	UObject* ProgressProvider, FName SourceId, FGuid ResolvedId, bool bCancelled)
 {
-	if (!ProgressProvider)
-	{
-		return;
-	}
+	if (ProgressProvider) OnCommandProgressChanged.Broadcast(ProgressProvider, SourceId, ResolvedId, bCancelled);
+}
 
-	if (bCommandProgressNotificationInProgress)
-	{
-		return;
-	}
+void URTSSelectionSubsystem::NotifyUnitHealthChanged(
+	const FEntityHandle& Entity, float CurrentHealth, float MaximumHealth)
+{
+	OnUnitHealthChanged.Broadcast(Entity, CurrentHealth, MaximumHealth);
+}
 
-	TGuardValue<bool> DispatchGuard(
-		bCommandProgressNotificationInProgress,
-		true);
-	OnCommandProgressChanged.Broadcast(ProgressProvider);
+UObject* FRTSUnitData::GetProgressProvider() const
+{
+	return ProgressProvider ? ProgressProvider.Get() : (CommandContext ? CommandContext.Get() : ActorPtr);
+}
+
+bool FRTSUnitData::MatchesProgressSource(UObject* Provider, FName SourceId) const
+{
+	return Provider && GetProgressProvider() == Provider && ProgressSourceId == SourceId;
+}
+
+bool FRTSUnitData::RefreshCommandProgress()
+{
+	UObject* Provider = GetProgressProvider();
+	if (!IsValid(Provider) || !Provider->Implements<URTSCommandProgressProvider>()) return false;
+	IRTSCommandProgressProvider::Execute_GetCommandProgressItems(Provider, CommandProgressItems, ProgressSourceId);
+	const FRTSTimedCommandInstance* First = CommandProgressItems.FindByPredicate(
+		[](const FRTSTimedCommandInstance& Item) { return Item.State != ERTSTimedCommandState::Queued; });
+	bHasActivity = First != nullptr;
+	ActivityLabel = First
+		? (First->CommandButton ? First->CommandButton->DisplayName
+			: (!First->DisplayName.IsEmpty() ? First->DisplayName : FText::FromName(First->PayloadId)))
+		: FText::GetEmpty();
+	ActivityProgress = First ? First->GetProgress01() : 0.0f;
+	ActivityRemainingSeconds = First ? First->GetRemainingSeconds() : 0.0f;
+	ActivityDurationSeconds = First ? First->DurationSeconds : 0.0f;
+	ActivityQueueCount = CommandProgressItems.Num();
+	if (bHasProductionCapacity)
+	{
+		ProductionQueuedOrders = CommandProgressItems.FilterByPredicate(
+			[](const FRTSTimedCommandInstance& Item) { return Item.State == ERTSTimedCommandState::Queued; }).Num();
+		ProductionBusyLanes = CommandProgressItems.Num() - ProductionQueuedOrders;
+	}
+	return true;
 }
 
 namespace
@@ -928,6 +956,8 @@ namespace
 		}
 
 		Button->CommandTag = CommandTag;
+		Button->bIsResearch = Slot.bIsResearch;
+		Button->bRepeatableResearch = Slot.bRepeatableResearch;
 		Button->TargetType = ResolveCommandSlotTargetType(Slot, CommandTag);
 		int32 PresentationSlotIndex = Slot.SlotIndex;
 		FKey PresentationHotkey = Slot.Hotkey.IsNone()
@@ -981,6 +1011,7 @@ void URTSSelectionSubsystem::Initialize(FSubsystemCollectionBase& Collection)
 void URTSSelectionSubsystem::Deinitialize()
 {
 	OnCommandFeedbackIssued.Clear();
+	OnUnitHealthChanged.Clear();
 	ControlGroups.Reset();
 	MassProtocolGridCache.Reset();
 	ActiveControlGroupIndex = INDEX_NONE;
@@ -1379,6 +1410,18 @@ FRTSSelectionView URTSSelectionSubsystem::BuildSelectionView()
 	return View;
 }
 
+TArray<FRTSUnitData> URTSSelectionSubsystem::GetUnitGroupMembers(const FString& GroupKey) const
+{
+	TArray<FRTSUnitData> Members;
+	const auto AddMember = [&Members, &GroupKey](FRTSUnitData Data)
+	{
+		if (GroupKey.IsEmpty() || GetSelectionUnitGroupKey(Data) == GroupKey) Members.Add(MoveTemp(Data));
+	};
+	for (AActor* Actor : SelectedActors) AddMember(CreateUnitDataFromActor(Actor));
+	for (const FEntityHandle& Entity : SelectedEntities) AddMember(CreateUnitDataFromEntity(Entity));
+	return Members;
+}
+
 void URTSSelectionSubsystem::AddOrUpdateSummaryGroup(TMap<FString, FRTSUnitData>& GroupMap, const FRTSUnitData& Data)
 {
 	const FString GroupKey = GetSelectionUnitGroupKey(Data);
@@ -1631,6 +1674,35 @@ bool URTSSelectionSubsystem::ResolveMassProtocolCommandGrid(const FString& Activ
 	}
 
 	return false;
+}
+
+URTSCommandButton* URTSSelectionSubsystem::FindCommandButton(FGameplayTag CommandTag)
+{
+	if (!CommandTag.IsValid()) return nullptr;
+	const auto FindInGrid = [CommandTag](URTSCommandGridAsset* Grid) -> URTSCommandButton*
+	{
+		if (Grid)
+			for (URTSCommandButton* Button : Grid->GetAllButtons())
+				if (Button && Button->CommandTag == CommandTag) return Button;
+		return nullptr;
+	};
+	for (const auto& Entry : MassProtocolGridCache)
+		if (URTSCommandButton* Button = FindInGrid(Entry.Value)) return Button;
+	const URTSInputPanelSettings* Settings = RTSUnitTypeProtocol::GetSettings();
+	if (!Settings) return nullptr;
+	for (const FRTSCommandLoadoutDefinition& Loadout : Settings->CommandLoadouts)
+	{
+		const bool bContainsCommand = Loadout.CommandSlots.ContainsByPredicate(
+			[CommandTag](const FRTSMassUnitCommandSlotDefinition& Slot)
+			{
+				return Slot.CommandTag == CommandTag
+					|| (!Slot.CommandTag.IsValid() && Slot.CommandTagName == CommandTag.GetTagName());
+			});
+		if (bContainsCommand || !Loadout.CommandGrid.IsNull())
+			if (URTSCommandButton* Button = FindInGrid(ResolveCommandLoadoutGrid(Settings, Loadout)))
+				return Button;
+	}
+	return nullptr;
 }
 
 URTSCommandGridAsset* URTSSelectionSubsystem::ResolveCommandLoadoutGrid(
@@ -2605,28 +2677,6 @@ FRTSUnitData URTSSelectionSubsystem::CreateUnitDataFromActor(AActor* Actor) cons
 		{
 			Data.Icon = LoadDefaultUnitPanelIconBySeed(GetTypeHash(Data.Name));
 		}
-		if (Actor->Implements<URTSCommandProgressProvider>())
-		{
-			IRTSCommandProgressProvider::Execute_GetCommandProgressItems(
-				Actor,
-				Data.CommandProgressItems);
-			if (!Data.CommandProgressItems.IsEmpty())
-			{
-				const FRTSTimedCommandInstance& First =
-					Data.CommandProgressItems[0];
-				Data.bHasActivity = true;
-				Data.ActivityLabel = First.CommandButton
-					? First.CommandButton->DisplayName
-					: (!First.DisplayName.IsEmpty()
-						? First.DisplayName
-						: FText::FromName(First.PayloadId));
-				Data.ActivityProgress = First.GetProgress01();
-				Data.ActivityRemainingSeconds =
-					First.GetRemainingSeconds();
-				Data.ActivityDurationSeconds = First.DurationSeconds;
-				Data.ActivityQueueCount = Data.CommandProgressItems.Num();
-			}
-		}
 		EnsureSelectionDataDefaults(Data, INDEX_NONE, GetTypeHash(Data.Name));
 	}
 	return Data;
@@ -2932,6 +2982,18 @@ TArray<FEntityHandle> URTSSelectionSubsystem::GetActiveMassEntities() const
 	// Keep the legacy fallback only for stale/malformed group keys so an ordinary
 	// Mass-only selection is not left without a command target.
 	return SelectedEntities;
+}
+
+UObject* URTSSelectionSubsystem::GetActiveCommandContext() const
+{
+	const TArray<FEntityHandle> Entities = GetActiveMassEntities();
+	if (!Entities.IsEmpty()) return CreateUnitDataFromEntity(Entities[0]).CommandContext.Get();
+	if (AActor* Actor = GetActiveActor())
+	{
+		const FRTSUnitData Data = CreateUnitDataFromActor(Actor);
+		return Data.CommandContext ? Data.CommandContext.Get() : Actor;
+	}
+	return nullptr;
 }
 
 AActor* URTSSelectionSubsystem::GetActiveActor() const

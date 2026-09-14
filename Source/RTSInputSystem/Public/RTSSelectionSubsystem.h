@@ -20,9 +20,12 @@ DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(FOnControlGroupsChanged, const FRTSC
 DECLARE_DYNAMIC_MULTICAST_DELEGATE_TwoParams(FOnControlGroupFocusRequested, int32, GroupIndex, FVector, WorldCenter);
 DECLARE_DYNAMIC_MULTICAST_DELEGATE(FOnCommandRefreshRequested);
 DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(FOnCommandNavigationRequested, class URTSCommandGridAsset*, NewGrid);
-DECLARE_MULTICAST_DELEGATE_OneParam(
+DECLARE_MULTICAST_DELEGATE_ThreeParams(
+	FOnRTSUnitHealthChanged,
+	const FEntityHandle& /*Entity*/, float /*CurrentHealth*/, float /*MaximumHealth*/);
+DECLARE_MULTICAST_DELEGATE_FourParams(
 	FOnRTSCommandProgressChanged,
-	AActor* /*ProgressProvider*/);
+	UObject* /*ProgressProvider*/, FName /*SourceId*/, FGuid /*ResolvedId*/, bool /*bCancelled*/);
 DECLARE_MULTICAST_DELEGATE_FourParams(
 	FOnRTSCommandFeedbackIssued,
 	FGameplayTag /*CommandTag*/,
@@ -71,6 +74,7 @@ public:
 	 */
 	FOnRTSCommandFeedbackIssued OnCommandFeedbackIssued;
 	FOnRTSCommandProgressChanged OnCommandProgressChanged;
+	FOnRTSUnitHealthChanged OnUnitHealthChanged;
 
     /** 广播给 UI，请求刷新当前的指令网格（当单位内部状态改变时，如 CD 结束） */
     UPROPERTY(BlueprintAssignable, Category = "RTS Selection")
@@ -88,7 +92,14 @@ public:
 	void RequestSelectionRefresh();
 
 	/** Announces a changed activity queue without rebuilding either UI panel. */
-	void NotifyCommandProgressChanged(AActor* ProgressProvider);
+	void NotifyCommandProgressChanged(UObject* ProgressProvider, FName SourceId = NAME_None,
+		FGuid ResolvedId = FGuid(), bool bCancelled = false);
+
+	/** Forwards processed health values to widgets already bound to the affected entity. */
+	void NotifyUnitHealthChanged(const FEntityHandle& Entity, float CurrentHealth, float MaximumHealth);
+
+	/** Finds the original command definition across the existing loadouts and cached grids. */
+	class URTSCommandButton* FindCommandButton(FGameplayTag CommandTag);
 
     UFUNCTION(BlueprintCallable, Category = "RTS Selection")
     void RequestGridNavigation(class URTSCommandGridAsset* NewGrid) { OnCommandNavigationRequested.Broadcast(NewGrid); }
@@ -258,6 +269,13 @@ public:
     UFUNCTION(BlueprintCallable, Category = "RTS Selection")
     AActor* GetActiveActor() const;
 
+	/** The same command owner carried by the active selection's unit data. */
+	UObject* GetActiveCommandContext() const;
+
+	/** Resolves the objects represented by a UI group when that UI establishes its binding. */
+	TArray<FRTSUnitData> GetUnitGroupMembers(const FString& GroupKey) const;
+	static void AddOrUpdateSummaryGroup(TMap<FString, FRTSUnitData>& GroupMap, const FRTSUnitData& Data);
+
 	/**
 	 * Event fired when selection changes. UI should bind to this.
 	 */
@@ -278,9 +296,6 @@ public:
 	UTexture2D* GetMassSubtypeUnitAvatar(int32 SubTypeIndex) const;
 
 private:
-	/** Prevents synchronous event listeners from recursively rebroadcasting the same UI update. */
-	bool bCommandProgressNotificationInProgress = false;
-
 	// Raw State
 	UPROPERTY()
 	TArray<AActor*> SelectedActors;
@@ -311,7 +326,6 @@ private:
 	FRTSUnitData CreateUnitDataFromEntity(const FEntityHandle& Handle) const;
 	FRTSSelectionView BuildSelectionView();
 	void BroadcastSelectionViewAndGrid(const FRTSSelectionView& View);
-	void AddOrUpdateSummaryGroup(TMap<FString, FRTSUnitData>& GroupMap, const FRTSUnitData& Data);
 	bool ResolveMassProtocolCommandGrid(const FString& ActiveKey, class URTSCommandGridAsset*& OutGrid);
 	class URTSCommandGridAsset* ResolveCommandLoadoutGrid(const URTSInputPanelSettings* Settings, const FRTSCommandLoadoutDefinition& Loadout);
 

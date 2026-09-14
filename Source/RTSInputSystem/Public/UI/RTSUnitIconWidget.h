@@ -42,6 +42,8 @@ protected:
 	virtual TSharedRef<SWidget> RebuildWidget() override;
 	virtual void NativeOnInitialized() override;
 	virtual void NativeConstruct() override;
+	virtual void NativeDestruct() override;
+	virtual void NativeTick(const FGeometry& MyGeometry, float InDeltaTime) override;
 
 	// Input Handling
 	virtual FReply NativeOnMouseButtonDown(const FGeometry& InGeometry, const FPointerEvent& InMouseEvent) override;
@@ -97,7 +99,15 @@ protected:
 private:
 	// Internal Copy of Data for Interaction
 	FRTSUnitData StoredData;
+	TArray<FRTSUnitData> SummaryMembers;
+	FDelegateHandle CommandProgressChangedHandle;
+	FDelegateHandle UnitHealthChangedHandle;
+	bool bShowStatusBars = true;
 
+	void BindUnitUpdates();
+	void OnUnitHealthChanged(const FEntityHandle& Entity, float CurrentHealth, float MaximumHealth);
+	void OnCommandProgressChanged(UObject* ProgressProvider, FName SourceId, FGuid ResolvedId, bool bCancelled);
+	void UpdateActivity();
 	void UpdateBar(class UProgressBar* Bar, float Current, float Max);
 	void UpdateTooltip(const FRTSUnitData& Data);
 	TSubclassOf<URTSTooltipWidget> ResolveTooltipClass() const;

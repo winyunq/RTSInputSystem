@@ -7,10 +7,12 @@
 #include "Components/Border.h"
 #include "Components/Image.h"
 #include "Components/PointLightComponent.h"
+#include "Components/SceneComponent.h"
 #include "Components/SceneCaptureComponent2D.h"
 #include "Components/SizeBox.h"
 #include "Engine/TextureRenderTarget2D.h"
 #include "Engine/World.h"
+#include "EngineUtils.h"
 #include "Fragments/RenderBatchData.h"
 #include "Fragments/Render.h"
 #include "Fragments/Transform.h"
@@ -90,6 +92,7 @@ TSharedRef<SWidget> URTSActiveGroupWidget::RebuildWidget()
 void URTSActiveGroupWidget::NativeConstruct()
 {
 	Super::NativeConstruct();
+	PrepareLivePortraitResources();
 
 	if (APlayerController* PC = GetOwningPlayer())
 	{
@@ -115,7 +118,19 @@ void URTSActiveGroupWidget::NativeDestruct()
 			}
 		}
 	}
-	StopLivePortrait();
+	if (UWorld* PreparedWorld = PortraitPreparedWorld.Get())
+	{
+		PreparedWorld->RemoveOnActorSpawnedHandler(PortraitActorSpawnedHandle);
+	}
+	PortraitActorSpawnedHandle.Reset();
+	PortraitPreparedWorld.Reset();
+	DestroyPortraitPreview();
+	if (PortraitCaptureComponent)
+	{
+		PortraitCaptureComponent->DestroyComponent();
+		PortraitCaptureComponent = nullptr;
+	}
+	PortraitRenderTarget = nullptr;
 
 	Super::NativeDestruct();
 }
@@ -133,9 +148,42 @@ void URTSActiveGroupWidget::NativeTick(
 	}
 }
 
+bool URTSActiveGroupWidget::PrepareLivePortraitResources()
+{
+	UWorld* World = GetWorld();
+	if (!bEnableLivePortrait || !AvatarImage || !World)
+	{
+		return false;
+	}
+	if (!PortraitActorSpawnedHandle.IsValid())
+	{
+		PortraitPreparedWorld = World;
+		PortraitActorSpawnedHandle = World->AddOnActorSpawnedHandler(
+			FOnActorSpawned::FDelegate::CreateUObject(
+				this, &URTSActiveGroupWidget::HandlePortraitActorSpawned));
+	}
+	if (!EnsurePortraitCaptureResources())
+	{
+		return false;
+	}
+	for (TActorIterator<AMassBattleAgentRenderer> It(World); It; ++It)
+	{
+		PreparePortraitPreviewComponent(*It);
+	}
+	return true;
+}
+
+void URTSActiveGroupWidget::HandlePortraitActorSpawned(AActor* Actor)
+{
+	if (AMassBattleAgentRenderer* Renderer = Cast<AMassBattleAgentRenderer>(Actor))
+	{
+		PreparePortraitPreviewComponent(Renderer);
+	}
+}
+
 bool URTSActiveGroupWidget::StartSelectedUnitPortrait(const FRTSUnitData& Data)
 {
-	if (!bEnableLivePortrait || !AvatarImage || !EnsurePortraitCaptureResources())
+	if (!bEnableLivePortrait || !AvatarImage || !PortraitCaptureComponent)
 	{
 		return false;
 	}
@@ -168,7 +216,7 @@ bool URTSActiveGroupWidget::StartSelectedUnitPortrait(const FRTSUnitData& Data)
 	PortraitSourceRenderer = Renderer;
 	if (!UpdatePortraitPreview())
 	{
-		DestroyPortraitPreview();
+		StopLivePortrait();
 		return false;
 	}
 
@@ -223,27 +271,7 @@ bool URTSActiveGroupWidget::EnsurePortraitCaptureResources()
 	}
 
 	PortraitCaptureComponent->FOVAngle = PortraitFieldOfView;
-	return true;
-}
-
-bool URTSActiveGroupWidget::EnsurePortraitPreviewComponent(
-	AMassBattleAgentRenderer* Renderer)
-{
-	if (!IsValid(Renderer)
-		|| !IsValid(Renderer->NiagaraSystemAsset)
-		|| !IsValid(Renderer->AgentMesh)
-		|| !PortraitCaptureComponent)
-	{
-		return false;
-	}
-
-	if (PortraitPreviewComponent
-		&& PortraitPreviewComponent->GetAsset() != Renderer->NiagaraSystemAsset)
-	{
-		DestroyPortraitPreview();
-	}
-
-	if (!PortraitPreviewComponent)
+	if (!PortraitPreviewActor)
 	{
 		// Controllers are hidden actors. Their primitive components inherit that
 		// visibility even when a scene capture explicitly includes the component.
@@ -251,42 +279,19 @@ bool URTSActiveGroupWidget::EnsurePortraitPreviewComponent(
 		SpawnParameters.ObjectFlags |= RF_Transient;
 		SpawnParameters.SpawnCollisionHandlingOverride =
 			ESpawnActorCollisionHandlingMethod::AlwaysSpawn;
-		PortraitPreviewActor = GetWorld()->SpawnActor<AActor>(SpawnParameters);
+		PortraitPreviewActor = World->SpawnActor<AActor>(SpawnParameters);
 		if (!PortraitPreviewActor)
 		{
 			return false;
 		}
 		PortraitPreviewActor->SetActorEnableCollision(false);
-		PortraitPreviewComponent = NewObject<UNiagaraComponent>(
+		USceneComponent* PreviewRoot = NewObject<USceneComponent>(
 			PortraitPreviewActor,
 			NAME_None,
 			RF_Transient);
-		if (!PortraitPreviewComponent)
-		{
-			DestroyPortraitPreview();
-			return false;
-		}
-		PortraitPreviewActor->SetRootComponent(PortraitPreviewComponent);
-
-		PortraitPreviewComponent->SetAsset(Renderer->NiagaraSystemAsset);
-		PortraitPreviewComponent->SetForceSolo(true);
-		PortraitPreviewComponent->SetAllowScalability(false);
-		PortraitPreviewComponent->SetAutoDestroy(false);
-		PortraitPreviewComponent->SetCastShadow(true);
-		PortraitPreviewComponent->SetVisibleInSceneCaptureOnly(true);
-		PortraitPreviewComponent->SetSystemFixedBounds(
-			FBox(FVector(-50000.0), FVector(50000.0)));
-		PortraitPreviewComponent->SetVariableStaticMesh(
-			TEXT("AgentMesh"),
-			Renderer->AgentMesh);
-		PortraitPreviewComponent->RegisterComponentWithWorld(GetWorld());
-		PortraitPreviewComponent->Activate(true);
-	}
-	else
-	{
-		PortraitPreviewComponent->SetVariableStaticMesh(
-			TEXT("AgentMesh"),
-			Renderer->AgentMesh);
+		PortraitPreviewActor->SetRootComponent(PreviewRoot);
+		PreviewRoot->RegisterComponentWithWorld(World);
+		PortraitPreviewActor->SetActorLocation(PortraitStageLocation);
 	}
 
 	if (!PortraitKeyLightComponent)
@@ -297,11 +302,13 @@ bool URTSActiveGroupWidget::EnsurePortraitPreviewComponent(
 			RF_Transient);
 		if (PortraitKeyLightComponent)
 		{
+			PortraitKeyLightComponent->SetupAttachment(PortraitPreviewActor->GetRootComponent());
 			PortraitKeyLightComponent->SetMobility(EComponentMobility::Movable);
 			PortraitKeyLightComponent->SetIntensity(6500.0f);
 			PortraitKeyLightComponent->SetLightColor(
 				FLinearColor(0.86f, 0.94f, 1.0f));
 			PortraitKeyLightComponent->SetCastShadows(true);
+			PortraitKeyLightComponent->SetVisibility(false);
 			PortraitKeyLightComponent->RegisterComponentWithWorld(GetWorld());
 		}
 	}
@@ -313,14 +320,72 @@ bool URTSActiveGroupWidget::EnsurePortraitPreviewComponent(
 			RF_Transient);
 		if (PortraitFillLightComponent)
 		{
+			PortraitFillLightComponent->SetupAttachment(PortraitPreviewActor->GetRootComponent());
 			PortraitFillLightComponent->SetMobility(EComponentMobility::Movable);
 			PortraitFillLightComponent->SetIntensity(2200.0f);
 			PortraitFillLightComponent->SetLightColor(
 				FLinearColor(0.18f, 0.48f, 0.72f));
 			PortraitFillLightComponent->SetCastShadows(false);
+			PortraitFillLightComponent->SetVisibility(false);
 			PortraitFillLightComponent->RegisterComponentWithWorld(GetWorld());
 		}
 	}
+	return true;
+}
+
+void URTSActiveGroupWidget::PreparePortraitPreviewComponent(
+	AMassBattleAgentRenderer* Renderer)
+{
+	if (!IsValid(Renderer)
+		|| !IsValid(Renderer->NiagaraSystemAsset)
+		|| !IsValid(Renderer->AgentMesh)
+		|| !PortraitPreviewActor
+		|| PortraitPreviewComponents.Contains(Renderer->NiagaraSystemAsset))
+	{
+		return;
+	}
+	UNiagaraComponent* Preview = NewObject<UNiagaraComponent>(
+		PortraitPreviewActor, NAME_None, RF_Transient);
+	Preview->SetupAttachment(PortraitPreviewActor->GetRootComponent());
+	Preview->SetAsset(Renderer->NiagaraSystemAsset);
+	Preview->SetForceSolo(true);
+	Preview->SetAllowScalability(false);
+	Preview->SetAutoActivate(false);
+	Preview->SetAutoDestroy(false);
+	Preview->SetCastShadow(true);
+	Preview->SetVisibleInSceneCaptureOnly(true);
+	Preview->SetVisibility(false);
+	Preview->SetSystemFixedBounds(FBox(FVector(-50000.0), FVector(50000.0)));
+	Preview->SetVariableStaticMesh(TEXT("AgentMesh"), Renderer->AgentMesh);
+	Preview->RegisterComponentWithWorld(GetWorld());
+	Preview->Activate(true);
+	Preview->SetPaused(true);
+	PortraitPreviewComponents.Add(Renderer->NiagaraSystemAsset, Preview);
+}
+
+bool URTSActiveGroupWidget::EnsurePortraitPreviewComponent(
+	AMassBattleAgentRenderer* Renderer)
+{
+	if (!IsValid(Renderer) || !IsValid(Renderer->AgentMesh) || !PortraitCaptureComponent)
+	{
+		return false;
+	}
+	const TObjectPtr<UNiagaraComponent>* Prepared =
+		PortraitPreviewComponents.Find(Renderer->NiagaraSystemAsset);
+	if (!Prepared || !IsValid(Prepared->Get()))
+	{
+		return false;
+	}
+	if (PortraitPreviewComponent != Prepared->Get())
+	{
+		StopLivePortrait();
+		PortraitPreviewComponent = Prepared->Get();
+	}
+	PortraitPreviewComponent->SetVariableStaticMesh(TEXT("AgentMesh"), Renderer->AgentMesh);
+	PortraitPreviewComponent->SetVisibility(true);
+	PortraitPreviewComponent->SetPaused(false);
+	if (PortraitKeyLightComponent) PortraitKeyLightComponent->SetVisibility(true);
+	if (PortraitFillLightComponent) PortraitFillLightComponent->SetVisibility(true);
 
 	PortraitCaptureComponent->PrimitiveRenderMode =
 		ESceneCapturePrimitiveRenderMode::PRM_UseShowOnlyList;
@@ -353,27 +418,29 @@ void URTSActiveGroupWidget::ApplyLivePortraitBrush()
 
 void URTSActiveGroupWidget::StopLivePortrait()
 {
-	DestroyPortraitPreview();
-	if (PortraitCaptureComponent)
-	{
-		PortraitCaptureComponent->DestroyComponent();
-		PortraitCaptureComponent = nullptr;
-	}
-	PortraitRenderTarget = nullptr;
-}
-
-void URTSActiveGroupWidget::DestroyPortraitPreview()
-{
 	ClearPortraitSource();
+	if (PortraitPreviewComponent)
+	{
+		PortraitPreviewComponent->SetPaused(true);
+		PortraitPreviewComponent->SetVisibility(false);
+		PortraitPreviewComponent = nullptr;
+	}
+	if (PortraitKeyLightComponent) PortraitKeyLightComponent->SetVisibility(false);
+	if (PortraitFillLightComponent) PortraitFillLightComponent->SetVisibility(false);
 	if (PortraitCaptureComponent)
 	{
 		PortraitCaptureComponent->ClearShowOnlyComponents();
 	}
-	if (PortraitPreviewComponent)
+}
+
+void URTSActiveGroupWidget::DestroyPortraitPreview()
+{
+	StopLivePortrait();
+	for (auto& Pair : PortraitPreviewComponents)
 	{
-		PortraitPreviewComponent->DestroyComponent();
-		PortraitPreviewComponent = nullptr;
+		if (Pair.Value) Pair.Value->DestroyComponent();
 	}
+	PortraitPreviewComponents.Reset();
 	if (PortraitKeyLightComponent)
 	{
 		PortraitKeyLightComponent->DestroyComponent();
@@ -667,7 +734,7 @@ void URTSActiveGroupWidget::CapturePortraitFrame()
 {
 	if (!UpdatePortraitPreview())
 	{
-		DestroyPortraitPreview();
+		StopLivePortrait();
 		return;
 	}
 
@@ -676,7 +743,7 @@ void URTSActiveGroupWidget::CapturePortraitFrame()
 
 void URTSActiveGroupWidget::ApplyStaticPortrait(UTexture2D* Texture)
 {
-	DestroyPortraitPreview();
+	StopLivePortrait();
 
 	if (AvatarImage && Texture)
 	{

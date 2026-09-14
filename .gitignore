@@ -1,16 +1,25 @@
-Binaries
-DerivedDataCache
-Intermediate
-Saved
-.vscode
-.vs
-*.VC.db
-*.opensdf
-*.opendb
-*.sdf
-*.sln
-*.suo
-*.xcodeproj
-*.xcworkspace
+# Only plugin descriptors, source, configuration and assets are versioned.
+/*
+!/.gitignore
+!/.gitattributes
+!/.gitmodules
+!/*.uplugin
+!/Source/
+!/Config/
+!/Content/
+!/Resources/
+!/Shaders/
 
-/.codex-remote-attachments/
+# Generated files and caches are never project inputs.
+**/Binaries/
+**/Intermediate/
+**/Saved/
+**/DerivedDataCache/
+**/__pycache__/
+**/.pytest_cache/
+**/.vs/
+*.pyc
+*.pyo
+*.log
+*.bak
+*.codex-bak-*

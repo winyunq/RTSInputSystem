@@ -1,6 +1,10 @@
 #include "UI/RTSCommanderGridWidget.h"
 #include "Components/SizeBox.h"
 #include "Components/Border.h"
+#include "Components/Overlay.h"
+#include "Components/OverlaySlot.h"
+#include "Components/TextBlock.h"
+#include "Styling/CoreStyle.h"
 #include "Components/UniformGridSlot.h"
 #include "Components/InputComponent.h"
 #include "Blueprint/SlateBlueprintLibrary.h"
@@ -489,6 +493,7 @@ void URTSCommanderGridWidget::InitGridSlots()
 	CommandGridPanel->ClearChildren();
 	GridButtons.Init(nullptr, CommandGridSlotCount);
 	GridSlots.Reset();
+	GridHotkeyLabels.Reset();
 
 	CommandGridPanel->SetSlotPadding(SlotPadding);
 	CommandGridPanel->SetMinDesiredSlotWidth(FMath::Max(1.0f, ButtonSize.X));
@@ -499,21 +504,43 @@ void URTSCommanderGridWidget::InitGridSlots()
 	{
 		for (int32 Col = 0; Col < CommandGridColumns; ++Col)
 		{
+			UOverlay* CellLayers = WidgetTree->ConstructWidget<UOverlay>();
 			USizeBox* Cell = WidgetTree->ConstructWidget<USizeBox>();
 			Cell->SetWidthOverride(ButtonSize.X);
 			Cell->SetHeightOverride(ButtonSize.Y);
 			Cell->SetClipping(EWidgetClipping::ClipToBounds);
-			UUniformGridSlot* GridSlot = CommandGridPanel->AddChildToUniformGrid(Cell, Row, Col);
+			CellLayers->AddChildToOverlay(Cell);
+			UTextBlock* HotkeyLabel = WidgetTree->ConstructWidget<UTextBlock>();
+			HotkeyLabel->SetFont(FCoreStyle::GetDefaultFontStyle("Bold", 24));
+			HotkeyLabel->SetColorAndOpacity(FSlateColor(FLinearColor::White));
+			HotkeyLabel->SetShadowColorAndOpacity(FLinearColor::Black);
+			HotkeyLabel->SetShadowOffset(FVector2D(1.0f, 1.0f));
+			HotkeyLabel->SetVisibility(ESlateVisibility::Collapsed);
+			UOverlaySlot* LabelSlot = CellLayers->AddChildToOverlay(HotkeyLabel);
+			LabelSlot->SetPadding(FMargin(6.0f));
+			LabelSlot->SetHorizontalAlignment(HAlign_Left);
+			LabelSlot->SetVerticalAlignment(VAlign_Top);
+			UUniformGridSlot* GridSlot = CommandGridPanel->AddChildToUniformGrid(CellLayers, Row, Col);
 			GridSlot->SetHorizontalAlignment(HAlign_Fill);
 			GridSlot->SetVerticalAlignment(VAlign_Fill);
 			GridSlots.Add(Cell);
+			GridHotkeyLabels.Add(HotkeyLabel);
 		}
 	}
 }
 
+void URTSCommanderGridWidget::UpdateSlotHotkey(int32 SlotIndex)
+{
+	URTSCommandButtonWidget* Button = GridButtons[SlotIndex];
+	const FKey Key = Button ? GetEffectiveCommandPanelKey(Button->GetData(), SlotIndex) : FKey();
+	UTextBlock* Label = GridHotkeyLabels[SlotIndex];
+	Label->SetText(Key.IsValid() ? Key.GetDisplayName() : FText::GetEmpty());
+	Label->SetVisibility(Key.IsValid() && AreCommandPanelHotkeysEnabled()
+		? ESlateVisibility::HitTestInvisible : ESlateVisibility::Collapsed);
+}
+
 void URTSCommanderGridWidget::OnSelectionUpdated(const FRTSSelectionView& View)
 {
-	Super::OnSelectionUpdated(View);
     LastSelectionView = View;
 
 	URTSCommandGridAsset* BaseGrid = nullptr;
@@ -531,6 +558,8 @@ void URTSCommanderGridWidget::OnSelectionUpdated(const FRTSSelectionView& View)
 		}
 	}
 
+	// The Blueprint active-group callback can build the grid immediately.
+	Super::OnSelectionUpdated(View);
 	if (BaseGrid)
 	{
 		UpdateGrid(BaseGrid);
@@ -623,23 +652,46 @@ void URTSCommanderGridWidget::RefreshGrid(const TArray<URTSCommandButton*>& Butt
 {
 	if (Buttons.Num() != CommandGridSlotCount || GridSlots.Num() != CommandGridSlotCount) return;
 
-	for (int32 i = 0; i < CommandGridSlotCount; ++i)
-	{
-		GridSlots[i]->ClearChildren();
-		GridButtons[i] = nullptr;
-	}
 	FRTSUnitData Owner = LastSelectionView.SingleUnit;
+	if (LastSelectionView.Mode != ERTSSelectionMode::Single && !LastSelectionView.Items.IsEmpty())
+	{
+		const FRTSUnitData* Active = LastSelectionView.Items.FindByPredicate([this](const FRTSUnitData& Data)
+			{ return (Data.GroupKey.IsEmpty() ? Data.Name : Data.GroupKey) == LastSelectionView.ActiveGroupKey; });
+		Owner = Active ? *Active : LastSelectionView.Items[0];
+	}
 	Owner.ActorPtr = ActiveActorPtr.Get();
+	TArray<FRTSUnitData> CommandOwners{Owner};
+	if (ULocalPlayer* Player = GetOwningLocalPlayer())
+		if (auto* Selection = Player->GetSubsystem<URTSSelectionSubsystem>())
+			CommandOwners = Selection->GetUnitGroupMembers(LastSelectionView.ActiveGroupKey);
+	TArray<URTSCommandButtonWidget*> DesiredButtons;
+	DesiredButtons.SetNumZeroed(CommandGridSlotCount);
+	bool bHotkeysChanged = false;
 	for (int32 i = 0; i < CommandGridSlotCount; ++i)
 	{
 		URTSCommandButtonWidget* Button = GetCommandButtonInstance(Buttons[i], Owner);
-		if (!Button || Button->IsProgressItemMode()) continue;
-		Button->Init(Buttons[i], Owner.ActorPtr, GetEffectiveCommandPanelKey(Buttons[i], i));
-		GridSlots[i]->AddChild(Button);
+		if (Button && !Button->IsProgressItemMode()) DesiredButtons[i] = Button;
+		bHotkeysChanged |= GridButtons[i] != DesiredButtons[i];
+	}
+	// Detach every displaced child before attaching any replacement, including swaps.
+	for (int32 i = 0; i < CommandGridSlotCount; ++i)
+		if (GridSlots[i]->GetContent() != DesiredButtons[i]) GridSlots[i]->ClearChildren();
+	for (int32 i = 0; i < CommandGridSlotCount; ++i)
+	{
+		URTSCommandButtonWidget* Button = DesiredButtons[i];
 		GridButtons[i] = Button;
+		UpdateSlotHotkey(i);
+		if (!Button) continue;
+		const FKey Hotkey = GetEffectiveCommandPanelKey(Buttons[i], i);
+		bHotkeysChanged |= Button->CommandHotkey != Hotkey;
+		if (Button->GetParent() != GridSlots[i] || Button->ContextActor.Get() != Owner.ActorPtr
+			|| Button->CommandHotkey != Hotkey)
+			Button->Init(Buttons[i], Owner.ActorPtr, Hotkey);
+		if (Button->GetParent() != GridSlots[i]) GridSlots[i]->AddChild(Button);
+		Button->BindCommandState(CommandOwners);
 	}
 
-	RebuildCommandPanelHotkeys();
+	if (bHotkeysChanged) RebuildCommandPanelHotkeys();
 	UpdateCommandStateVisuals();
 }
 
@@ -647,7 +699,13 @@ URTSCommandButtonWidget* URTSCommanderGridWidget::GetCommandButtonInstance(
 	URTSCommandButton* Definition, const FRTSUnitData& Owner)
 {
 	if (!Definition || !ButtonParams) return nullptr;
+	Definition->CommandContext = Owner.CommandContext.Get();
 	const bool bPerOwner = Definition->bIsResearch && !Definition->bRepeatableResearch;
+	if (bPerOwner && Owner.CommandContext)
+		for (const FRTSTimedCommandInstance& Item : Owner.CommandProgressItems)
+			if (Item.CommandTag == Definition->CommandTag)
+				if (const auto* Existing = ResearchButtons.Find(Item.InstanceId))
+					if ((*Existing)->GetData() == Definition) return *Existing;
 	for (URTSCommandButtonWidget* Button : CommandButtonInstances)
 		if (Button && Button->GetData() == Definition && (!bPerOwner
 			|| (Button->CommandOwnerEntity == Owner.EntityHandle && Button->ContextActor.Get() == Owner.ActorPtr)))
@@ -666,16 +724,35 @@ URTSCommandButtonWidget* URTSCommanderGridWidget::GetCommandButtonInstance(
 URTSCommandButtonWidget* URTSCommanderGridWidget::AcquireResearchButton(
 	const FRTSTimedCommandInstance& Item, const FRTSUnitData& Owner)
 {
-	if (!Item.InstanceId.IsValid() || !Item.CommandButton || !Item.CommandButton->bIsResearch) return nullptr;
+	if (!Item.InstanceId.IsValid()) return nullptr;
+	FRTSTimedCommandInstance PresentationItem = Item;
 	if (const TObjectPtr<URTSCommandButtonWidget>* Existing = ResearchButtons.Find(Item.InstanceId))
 	{
-		(*Existing)->InitProgressItem(Item, Owner.ActorPtr, ButtonSize.X);
+		if (!PresentationItem.CommandButton) PresentationItem.CommandButton = (*Existing)->GetData();
+		if (PresentationItem.CommandButton) PresentationItem.CommandButton->CommandContext = Owner.CommandContext.Get();
+		(*Existing)->CommandOwnerEntity = Owner.EntityHandle;
+		(*Existing)->ContextActor = Owner.ActorPtr;
+		(*Existing)->ProgressOwnerEntity = Owner.EntityHandle;
+		(*Existing)->ProgressOwnerActor = Owner.ActorPtr;
+		(*Existing)->InitProgressItem(PresentationItem, Owner.ActorPtr, ButtonSize.X);
+		(*Existing)->BindCommandState({Owner});
 		return *Existing;
 	}
-	URTSCommandButtonWidget* Source = GetCommandButtonInstance(Item.CommandButton, Owner);
+	const bool bFallback = !PresentationItem.CommandButton;
+	if (bFallback)
+	{
+		URTSCommandButton* Definition = NewObject<URTSCommandButton>(this);
+		Definition->CommandTag = Item.CommandTag;
+		Definition->DisplayName = Item.DisplayName.IsEmpty() ? FText::FromName(Item.PayloadId) : Item.DisplayName;
+		Definition->Icon = Item.Icon;
+		Definition->bIsResearch = true;
+		PresentationItem.CommandButton = Definition;
+	}
+	if (!PresentationItem.CommandButton->bIsResearch) return nullptr;
+	URTSCommandButtonWidget* Source = GetCommandButtonInstance(PresentationItem.CommandButton, Owner);
 	if (!Source) return nullptr;
 	URTSCommandButtonWidget* Button = Source;
-	if (Item.CommandButton->bRepeatableResearch)
+	if (PresentationItem.CommandButton->bRepeatableResearch)
 	{
 		Button = DuplicateObject<URTSCommandButtonWidget>(Source, this,
 			MakeUniqueObjectName(this, Source->GetClass(), TEXT("ResearchCopy")));
@@ -693,25 +770,39 @@ URTSCommandButtonWidget* URTSCommanderGridWidget::AcquireResearchButton(
 		if (Source->IsProgressItemMode()) return nullptr;
 		// Reparent this instance. Its command-card cell stays in place and empty.
 		Source->RemoveFromParent();
-		for (TObjectPtr<URTSCommandButtonWidget>& CardButton : GridButtons)
-			if (CardButton == Source) CardButton = nullptr;
+		const int32 SlotIndex = GridButtons.IndexOfByKey(Source);
+		if (SlotIndex != INDEX_NONE)
+		{
+			GridButtons[SlotIndex] = nullptr;
+			UpdateSlotHotkey(SlotIndex);
+		}
 		RebuildCommandPanelHotkeys();
 	}
 	Button->ProgressOwnerEntity = Owner.EntityHandle;
 	Button->ProgressOwnerActor = Owner.ActorPtr;
+	// A task without a card definition owns only its progress presentation.
+	if (bFallback) Button->bResearchCopy = true;
 	Button->bReturnOnCancel = false;
-	Button->InitProgressItem(Item, Owner.ActorPtr, ButtonSize.X);
+	Button->InitProgressItem(PresentationItem, Owner.ActorPtr, ButtonSize.X);
+	Button->BindCommandState({Owner});
 	ResearchButtons.Add(Item.InstanceId, Button);
 	return Button;
 }
 
-void URTSCommanderGridWidget::ReleaseFinishedResearchButtons(const FRTSUnitData& Owner)
+void URTSCommanderGridWidget::ReleaseFinishedResearchButtons(const FRTSUnitData& Owner,
+	FGuid ResolvedId, bool bCancelled)
 {
-	bool bChanged = false;
+	bool bHotkeysChanged = false;
 	for (auto It = ResearchButtons.CreateIterator(); It; ++It)
 	{
 		URTSCommandButtonWidget* Button = It.Value();
 		if (Button->ProgressOwnerEntity != Owner.EntityHandle || Button->ProgressOwnerActor.Get() != Owner.ActorPtr) continue;
+		if (ResolvedId.IsValid() && ResolvedId == It.Key())
+		{
+			Button->bProgressResolved = true;
+			Button->bReturnOnCancel = bCancelled;
+		}
+		if (!Button->bProgressResolved) continue;
 		if (Owner.CommandProgressItems.ContainsByPredicate([&It](const FRTSTimedCommandInstance& Item)
 			{ return Item.InstanceId == It.Key(); })) continue;
 		Button->RemoveFromParent();
@@ -719,6 +810,17 @@ void URTSCommanderGridWidget::ReleaseFinishedResearchButtons(const FRTSUnitData&
 		{
 			// Cancellation moves the original back; it never constructs a replacement.
 			Button->Init(Button->GetData(), Owner.ActorPtr, Button->CommandHotkey);
+			Button->BindCommandState({Owner});
+			TArray<URTSCommandButton*> CurrentButtons;
+			PopulateSparseButtons(CurrentGridAsset.Get(), CurrentButtons);
+			const int32 Index = CurrentButtons.IndexOfByKey(Button->GetData());
+			if (GridSlots.IsValidIndex(Index) && !GridSlots[Index]->GetContent())
+			{
+				GridButtons[Index] = Button;
+				GridSlots[Index]->AddChild(Button);
+				UpdateSlotHotkey(Index);
+				bHotkeysChanged = true;
+			}
 		}
 		else
 		{
@@ -726,9 +828,8 @@ void URTSCommanderGridWidget::ReleaseFinishedResearchButtons(const FRTSUnitData&
 			CommandButtonInstances.Remove(Button);
 		}
 		It.RemoveCurrent();
-		bChanged = true;
 	}
-	if (bChanged) RefreshVisuals();
+	if (bHotkeysChanged) RebuildCommandPanelHotkeys();
 }
 
 void URTSCommanderGridWidget::OnActorGridChanged()
@@ -825,13 +926,12 @@ void URTSCommanderGridWidget::OnGridButtonClicked(const FGameplayTag& CommandTag
             }
             else
             {
-                // Fallback for actor-less selection (pure Mass entities). Let the button
+            // Fallback for actor-less selection (pure Mass entities). Let the button
                 // asset decide first; the default button implementation still routes
                 // ordinary Mass commands through URTSCommandSubsystem.
                 ClickedData->Execute(GetOwningPlayer());
             }
 
-			UpdateCommandStateVisuals();
         }
     }
 }
@@ -841,6 +941,7 @@ void URTSCommanderGridWidget::OnGridButtonClicked(const FGameplayTag& CommandTag
 void URTSCommanderGridWidget::NotifyButtonHovered(URTSCommandButtonWidget* Btn, URTSCommandButton* Data)
 {
     if (!Data) return;
+	HoveredTooltipButton = Btn;
 
     // Lazy Create
     if (!SharedTooltip && TooltipClass)
@@ -865,7 +966,7 @@ void URTSCommanderGridWidget::NotifyButtonHovered(URTSCommandButtonWidget* Btn, 
 
     if (SharedTooltip)
     {
-        SharedTooltip->UpdateTooltip(Data);
+        SharedTooltip->UpdateTooltip(Data, Btn ? Btn->ContextActor.Get() : nullptr, Btn);
         SharedTooltip->SetVisibility(ESlateVisibility::SelfHitTestInvisible);
         PositionSharedTooltip();
         UE_LOG(LogTemp, Verbose, TEXT("Showing Tooltip for: %s"), *Data->DisplayName.ToString());
@@ -874,6 +975,8 @@ void URTSCommanderGridWidget::NotifyButtonHovered(URTSCommandButtonWidget* Btn, 
 
 void URTSCommanderGridWidget::NotifyButtonUnhovered(URTSCommandButtonWidget* Btn)
 {
+	if (HoveredTooltipButton.Get() != Btn) return;
+	HoveredTooltipButton.Reset();
     if (SharedTooltip)
     {
         SharedTooltip->SetVisibility(ESlateVisibility::Collapsed);
@@ -1201,12 +1304,24 @@ void URTSCommanderGridWidget::UpdateCommandStateVisuals()
 			continue;
 		}
 
-		ButtonWidget->RefreshCommandState();
 		URTSCommandButton* ButtonData = ButtonWidget->GetData();
 		ButtonWidget->SetCommandActive(
 			ButtonData
 			&& ActiveCommandTag.IsValid()
 			&& ButtonData->CommandTag.MatchesTagExact(ActiveCommandTag));
+	}
+	if (SharedTooltip && HoveredTooltipButton.IsValid())
+	{
+		URTSCommandButtonWidget* Hovered = HoveredTooltipButton.Get();
+		if (Hovered->GetParent() && Hovered->IsVisible() && Hovered->GetData())
+		{
+			SharedTooltip->UpdateTooltip(Hovered->GetData(), Hovered->ContextActor.Get(), Hovered);
+			PositionSharedTooltip();
+		}
+		else
+		{
+			NotifyButtonUnhovered(Hovered);
+		}
 	}
 }
 
@@ -1217,9 +1332,6 @@ void URTSCommanderGridWidget::PositionSharedTooltip()
 	{
 		return;
 	}
-
-	const FVector2D TooltipSize =
-		GetTooltipDesiredSize(SharedTooltip, FVector2D(380.0f, 220.0f));
 
 	if (bFixedTooltipAboveGrid)
 	{
@@ -1240,6 +1352,8 @@ void URTSCommanderGridWidget::PositionSharedTooltip()
 			AnchorViewportPosition);
 
 		const FVector2D AnchorSize = AnchorGeometry.GetLocalSize();
+		SharedTooltip->SetContentWidth(AnchorSize.X);
+		const FVector2D TooltipSize = GetTooltipDesiredSize(SharedTooltip, FVector2D(380.0f, 220.0f));
 		const FVector2D PanelTooltipSize(
 			FMath::Max(AnchorSize.X, 1.0f),
 			TooltipSize.Y);
@@ -1254,6 +1368,7 @@ void URTSCommanderGridWidget::PositionSharedTooltip()
 		return;
 	}
 
+	const FVector2D TooltipSize = GetTooltipDesiredSize(SharedTooltip, FVector2D(380.0f, 220.0f));
 	const FVector2D MousePos =
 		UWidgetLayoutLibrary::GetMousePositionOnViewport(this);
 	const FVector2D ViewportSize = GetViewportSizeInSlateUnits(this);

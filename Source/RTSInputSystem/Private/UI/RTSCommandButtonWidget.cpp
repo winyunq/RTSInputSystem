@@ -14,18 +14,16 @@
 #include "Interfaces/RTSCommandProgressController.h"
 #include "Materials/MaterialInstanceDynamic.h"
 #include "UI/RTSCommanderGridWidget.h"
+#include "RTSSelectionSubsystem.h"
+#include "Engine/LocalPlayer.h"
+#include "GameFramework/PlayerController.h"
 
 namespace
 {
 	URTSCommanderGridWidget* FindTooltipGrid(URTSCommandButtonWidget* Button)
 	{
-		if (auto* Grid = Button->GetTypedOuter<URTSCommanderGridWidget>()) return Grid;
-		TArray<UUserWidget*> Grids;
-		UWidgetBlueprintLibrary::GetAllWidgetsOfClass(Button, Grids, URTSCommanderGridWidget::StaticClass(), false);
-		for (UUserWidget* Widget : Grids)
-			if (Widget->GetOwningPlayer() == Button->GetOwningPlayer())
-				return Cast<URTSCommanderGridWidget>(Widget);
-		return nullptr;
+		UPanelWidget* Parent = Button->GetParent();
+		return Parent ? Parent->GetTypedOuter<URTSCommanderGridWidget>() : nullptr;
 	}
 }
 
@@ -74,14 +72,14 @@ TSharedRef<SWidget> URTSCommandButtonWidget::RebuildWidget()
 			LabelSlot->SetVerticalAlignment(VAlign_Fill);
 		}
 
-		HotkeyText = WidgetTree->ConstructWidget<UTextBlock>(
-			UTextBlock::StaticClass(), TEXT("HotkeyText"));
-		HotkeyText->SetColorAndOpacity(FSlateColor(FLinearColor(1.0f, 0.78f, 0.2f, 1.0f)));
-		if (UOverlaySlot* HotkeySlot = Face->AddChildToOverlay(HotkeyText))
+		QueueCountText = WidgetTree->ConstructWidget<UTextBlock>(
+			UTextBlock::StaticClass(), TEXT("QueueCountText"));
+		QueueCountText->SetVisibility(ESlateVisibility::Collapsed);
+		if (UOverlaySlot* CountSlot = Face->AddChildToOverlay(QueueCountText))
 		{
-			HotkeySlot->SetPadding(FMargin(6.0f));
-			HotkeySlot->SetHorizontalAlignment(HAlign_Right);
-			HotkeySlot->SetVerticalAlignment(VAlign_Bottom);
+			CountSlot->SetPadding(FMargin(0.0f, 0.0f, 8.0f, 6.0f));
+			CountSlot->SetHorizontalAlignment(HAlign_Right);
+			CountSlot->SetVerticalAlignment(VAlign_Bottom);
 		}
 
 		WidgetTree->RootWidget = RootSize;
@@ -93,6 +91,7 @@ TSharedRef<SWidget> URTSCommandButtonWidget::RebuildWidget()
 void URTSCommandButtonWidget::NativeConstruct()
 {
 	Super::NativeConstruct();
+	SubscribeCommandState();
 
 	if (MainButton)
 	{
@@ -106,6 +105,87 @@ void URTSCommandButtonWidget::NativeConstruct()
 		bHasDefaultButtonStyle = true;
 		ApplyInteractionVisualState();
 	}
+}
+
+void URTSCommandButtonWidget::NativeDestruct()
+{
+	// Moving a live task out of the visible panel does not end its object binding.
+	// AddUObject is weak; a retained task button still receives its actual resolution.
+	if (!bProgressItemMode || bProgressResolved)
+		if (ULocalPlayer* Player = GetOwningLocalPlayer())
+			if (auto* Selection = Player->GetSubsystem<URTSSelectionSubsystem>())
+				Selection->OnCommandProgressChanged.RemoveAll(this);
+	Super::NativeDestruct();
+}
+
+void URTSCommandButtonWidget::BindCommandState(const TArray<FRTSUnitData>& Owners)
+{
+	BoundProgressSources.Reset();
+	for (const FRTSUnitData& Owner : Owners)
+		if (UObject* Provider = Owner.GetProgressProvider())
+			BoundProgressSources.Emplace(Provider, Owner.ProgressSourceId);
+	CommandStateDependencies.Reset();
+	if (ButtonData)
+	{
+		TArray<UObject*> Dependencies;
+		AActor* Executor = ContextActor.IsValid() ? ContextActor.Get() : GetOwningPlayer();
+		ButtonData->GetCommandStateDependencies(this, Executor, Dependencies);
+		UObject* CommandContext = ButtonData->CommandContext.Get();
+		if (!CommandContext) CommandContext = Executor;
+		if (CommandContext && CommandContext->Implements<URTSCommandInterface>())
+		{
+			if (Owners.IsEmpty())
+			{
+				TArray<UObject*> OwnerDependencies;
+				IRTSCommandInterface::Execute_GetCommandStateDependencies(
+					CommandContext, ButtonData->CommandTag, NAME_None, OwnerDependencies);
+				Dependencies.Append(OwnerDependencies);
+			}
+			for (const FRTSUnitData& Owner : Owners)
+			{
+				TArray<UObject*> OwnerDependencies;
+				IRTSCommandInterface::Execute_GetCommandStateDependencies(
+					CommandContext, ButtonData->CommandTag, Owner.ProgressSourceId, OwnerDependencies);
+				Dependencies.Append(OwnerDependencies);
+			}
+		}
+		for (UObject* Dependency : Dependencies)
+			if (Dependency) CommandStateDependencies.AddUnique(Dependency);
+	}
+	SubscribeCommandState();
+	RefreshCommandState();
+}
+
+void URTSCommandButtonWidget::SubscribeCommandState()
+{
+	if (ULocalPlayer* Player = GetOwningLocalPlayer())
+		if (auto* Selection = Player->GetSubsystem<URTSSelectionSubsystem>())
+		{
+			Selection->OnCommandProgressChanged.RemoveAll(this);
+			if (ButtonData && (ButtonData->bIsResearch || !CommandStateDependencies.IsEmpty()))
+				Selection->OnCommandProgressChanged.AddUObject(this, &URTSCommandButtonWidget::OnCommandProgressChanged);
+		}
+}
+
+void URTSCommandButtonWidget::OnCommandProgressChanged(UObject* Provider, FName SourceId,
+	FGuid ResolvedId, bool bCancelled)
+{
+	if (!ButtonData || !Provider) return;
+	const bool bOwnSource = BoundProgressSources.ContainsByPredicate([Provider, SourceId](const auto& Source)
+		{ return Source.Key.Get() == Provider && Source.Value == SourceId; });
+	if (bProgressItemMode)
+	{
+		if (bOwnSource && ResolvedId.IsValid()
+			&& ProgressItemId == FName(*ResolvedId.ToString(EGuidFormats::Digits)))
+		{
+			bProgressResolved = true;
+			bReturnOnCancel = bCancelled;
+		}
+		return;
+	}
+	if (!bOwnSource && !CommandStateDependencies.Contains(Provider)) return;
+	RefreshCommandState();
+	if (IsHovered()) HandleHovered();
 }
 
 void URTSCommandButtonWidget::Init(URTSCommandButton* InData, AActor* InContext, FKey InOverrideHotkey)
@@ -124,8 +204,10 @@ void URTSCommandButtonWidget::Init(URTSCommandButton* InData, AActor* InContext,
 				RootSize->GetHeightOverride() / FMath::Max(1.0, FaceSize.Y)));
 		}
 	}
+	CommandState = FRTSCommandState();
 	bProgressItemMode = false;
 	bReturnOnCancel = false;
+	bProgressResolved = false;
 	CommandHotkey = InOverrideHotkey.IsValid() ? InOverrideHotkey : InData ? InData->Hotkey : FKey();
 	if (MainButton)
 	{
@@ -156,27 +238,11 @@ void URTSCommandButtonWidget::Init(URTSCommandButton* InData, AActor* InContext,
 
         if (DisplayNameText)
         {
-            DisplayNameText->SetText(ButtonData->DisplayName);
-            DisplayNameText->SetVisibility(!bHasIcon && !ButtonData->DisplayName.IsEmpty()
+            const FText Name = ButtonData->GetDisplayNameForContext(this, GetOwningPlayer());
+            DisplayNameText->SetText(Name);
+            DisplayNameText->SetVisibility(!bHasIcon && !Name.IsEmpty()
                 ? ESlateVisibility::HitTestInvisible
                 : ESlateVisibility::Collapsed);
-        }
-
-        // Set Hotkey Display
-        if (HotkeyText)
-        {
-			const FKey TargetKey = InOverrideHotkey.IsValid() ? InOverrideHotkey : ButtonData->Hotkey;
-            
-            // Check if key is valid
-            if (!TargetKey.IsValid())
-            {
-                HotkeyText->SetVisibility(ESlateVisibility::Collapsed);
-            }
-            else
-            {
-                HotkeyText->SetText(TargetKey.GetDisplayName());
-                HotkeyText->SetVisibility(ESlateVisibility::HitTestInvisible);
-            }
         }
 
         // Reset State
@@ -209,10 +275,8 @@ void URTSCommandButtonWidget::Init(URTSCommandButton* InData, AActor* InContext,
         if (MainButton)
         {
             MainButton->SetToolTip(nullptr);
-            if (!MainButton->OnHovered.IsAlreadyBound(this, &URTSCommandButtonWidget::HandleHovered))
-                MainButton->OnHovered.AddDynamic(this, &URTSCommandButtonWidget::HandleHovered);
-            if (!MainButton->OnUnhovered.IsAlreadyBound(this, &URTSCommandButtonWidget::HandleUnhovered))
-                MainButton->OnUnhovered.AddDynamic(this, &URTSCommandButtonWidget::HandleUnhovered);
+            MainButton->OnHovered.RemoveDynamic(this, &URTSCommandButtonWidget::HandleHovered);
+            MainButton->OnUnhovered.RemoveDynamic(this, &URTSCommandButtonWidget::HandleUnhovered);
         }
     }
     else
@@ -221,7 +285,6 @@ void URTSCommandButtonWidget::Init(URTSCommandButton* InData, AActor* InContext,
         if (MainButton) MainButton->SetToolTip(nullptr);
         if (IconImage) { IconImage->SetBrushFromTexture(nullptr); IconImage->SetVisibility(ESlateVisibility::Collapsed); }
         if (DisplayNameText) DisplayNameText->SetVisibility(ESlateVisibility::Collapsed);
-        if (HotkeyText) HotkeyText->SetVisibility(ESlateVisibility::Collapsed);
         if (QueueCountText) QueueCountText->SetVisibility(ESlateVisibility::Collapsed);
         if (CooldownImage) CooldownImage->SetVisibility(ESlateVisibility::Hidden);
         if (AutoCastBorder) AutoCastBorder->SetVisibility(ESlateVisibility::Hidden);
@@ -265,12 +328,23 @@ void URTSCommandButtonWidget::InitProgressItem(
 	ApplyInteractionVisualState();
 
 	bProgressItemMode = true;
+	bProgressResolved = false;
 	if (MainButton)
 	{
 		MainButton->OnClicked.RemoveDynamic(this, &URTSCommandButtonWidget::HandleClicked);
 		MainButton->OnClicked.AddUniqueDynamic(this, &URTSCommandButtonWidget::HandleProgressClicked);
 	}
 	bCanCancelProgressItem = ProgressItem.CommandButton && ProgressItem.bCanCancel;
+	CommandState.bHandled = true;
+	CommandState.bAvailable = bCanCancelProgressItem;
+	if (ProgressItem.InstanceId.IsValid())
+	{
+		// Keep the same button's prepared description and effects when it enters the queue.
+		CommandState.Costs.Reset();
+		CommandState.DurationSeconds = ProgressItem.DurationSeconds;
+		CommandState.StatusDescription = FText::FromString(ProgressItem.State == ERTSTimedCommandState::Queued ? TEXT("已排队，等待研发")
+			: ProgressItem.State == ERTSTimedCommandState::Paused ? TEXT("研发已暂停") : TEXT("正在研发"));
+	}
 	ProgressItemId = ProgressItem.InstanceId.IsValid()
 		? FName(*ProgressItem.InstanceId.ToString(EGuidFormats::Digits))
 		: NAME_None;
@@ -280,25 +354,70 @@ void URTSCommandButtonWidget::InitProgressItem(
 
 	if (QueueCountText)
 	{
-		if (ProgressItem.CommandButton && ProgressItem.State == ERTSTimedCommandState::Queued)
-		{
-			QueueCountText->SetText(FText::AsNumber(ProgressItem.QueueIndex));
-			QueueCountText->SetVisibility(ESlateVisibility::HitTestInvisible);
-		}
-		else
-		{
-			QueueCountText->SetVisibility(ESlateVisibility::Collapsed);
-		}
+		QueueCountText->SetVisibility(ESlateVisibility::Collapsed);
 	}
 	SetIsDisabled(ProgressItem.CommandButton == nullptr);
 	SetVisibility(ESlateVisibility::Visible);
+	if (URTSTooltipWidget* Tooltip = Cast<URTSTooltipWidget>(GetToolTip()))
+		Tooltip->UpdateTooltip(ButtonData, ContextActor.Get(), this);
+}
+
+void URTSCommandButtonWidget::InitEmptyProgressSlot(int32 SlotNumber, float IconSize)
+{
+	TakeWidget();
+	Init(nullptr);
+	FRTSTimedCommandInstance Empty;
+	Empty.bCanCancel = false;
+	InitProgressItem(Empty, nullptr, IconSize);
+	if (QueueCountText)
+	{
+		QueueCountText->SetText(FText::AsNumber(SlotNumber));
+		QueueCountText->SetJustification(ETextJustify::Center);
+		if (UOverlaySlot* NumberSlot = Cast<UOverlaySlot>(QueueCountText->Slot))
+		{
+			NumberSlot->SetPadding(FMargin(0.0f));
+			NumberSlot->SetHorizontalAlignment(HAlign_Center);
+			NumberSlot->SetVerticalAlignment(VAlign_Center);
+		}
+		QueueCountText->SetVisibility(ESlateVisibility::HitTestInvisible);
+	}
+}
+
+void URTSCommandButtonWidget::NativeOnMouseEnter(
+    const FGeometry& InGeometry, const FPointerEvent& InMouseEvent)
+{
+    Super::NativeOnMouseEnter(InGeometry, InMouseEvent);
+    // Slate removes disabled children from the hit path, but keeps this enabled
+    // wrapper. Show the existing shared tooltip without enabling the command.
+    HandleHovered();
+}
+
+void URTSCommandButtonWidget::NativeOnMouseLeave(const FPointerEvent& InMouseEvent)
+{
+    Super::NativeOnMouseLeave(InMouseEvent);
+    HandleUnhovered();
 }
 
 void URTSCommandButtonWidget::HandleHovered()
 {
-	if (ButtonData)
-		if (URTSCommanderGridWidget* Grid = FindTooltipGrid(this))
-			Grid->NotifyButtonHovered(this, ButtonData);
+	if (!ButtonData) return;
+	if (URTSCommanderGridWidget* Grid = FindTooltipGrid(this))
+	{
+		SetToolTip(nullptr);
+		Grid->NotifyButtonHovered(this, ButtonData);
+	}
+	else
+	{
+		URTSTooltipWidget* Tooltip = Cast<URTSTooltipWidget>(GetToolTip());
+		if (!Tooltip)
+		{
+			const TSubclassOf<URTSTooltipWidget> TooltipClass = LoadClass<URTSTooltipWidget>(nullptr,
+				TEXT("/Game/UI/HeadUpDisplay/ControlGird/ButtonMessage.ButtonMessage_C"));
+			Tooltip = CreateWidget<URTSTooltipWidget>(this, TooltipClass);
+			SetToolTip(Tooltip);
+		}
+		if (Tooltip) Tooltip->UpdateTooltip(ButtonData, ContextActor.Get(), this);
+	}
 }
 
 void URTSCommandButtonWidget::HandleUnhovered()
@@ -307,101 +426,97 @@ void URTSCommandButtonWidget::HandleUnhovered()
 		Grid->NotifyButtonUnhovered(this);
 }
 
+FRTSCommandState URTSCommandButtonWidget::ResolveCommandState() const
+{
+	if (!ButtonData) return FRTSCommandState();
+	const AActor* Executor = ContextActor.IsValid() ? ContextActor.Get() : GetOwningPlayer();
+	if (BoundProgressSources.IsEmpty())
+		return ButtonData->GetCommandStateForContext(this, Executor, NAME_None);
+	FRTSCommandState SelectedState;
+	bool bFoundVisibleSource = false;
+	for (int32 Index = 0; Index < BoundProgressSources.Num(); ++Index)
+	{
+		const FRTSCommandState State = ButtonData->GetCommandStateForContext(
+			this, Executor, BoundProgressSources[Index].Value);
+		if (Index == 0) SelectedState = State;
+		if (!State.bVisible) continue;
+		if (State.bAvailable) return State;
+		if (!bFoundVisibleSource)
+		{
+			SelectedState = State;
+			bFoundVisibleSource = true;
+		}
+	}
+	return SelectedState;
+}
+
+FText URTSCommandButtonWidget::GetTooltipDescription() const
+{
+	return CommandState.Description;
+}
+
 void URTSCommandButtonWidget::RefreshCommandState()
 {
-if (bProgressItemMode)
-{
-	return;
-}
+	if (bProgressItemMode || !ButtonData) return;
 
-// Update Availability, Cooldown & AutoCast State from Context
-if (ButtonData && ContextActor.IsValid() && ContextActor->Implements<URTSCommandInterface>())
-{
-    // 0. Availability & Visibility logic (Scheme A)
-    bool bAvailable = IRTSCommandInterface::Execute_IsCommandAvailable(ContextActor.Get(), ButtonData->CommandTag);
-    
-    if (!bAvailable)
-    {
-        if (ButtonData->bHideIfUnavailable)
-        {
-            SetVisibility(ESlateVisibility::Hidden);
-        }
-        else
-        {
-            SetVisibility(ESlateVisibility::Visible);
-            SetIsDisabled(true);
-        }
-    }
-    else
-    {
-        SetVisibility(ESlateVisibility::Visible);
-        SetIsDisabled(false);
-    }
+	if (DisplayNameText)
+	{
+		const FText Name = ButtonData->GetDisplayNameForContext(this, GetOwningPlayer());
+		DisplayNameText->SetText(Name);
+		DisplayNameText->SetVisibility(!IsValid(ButtonData->Icon) && !Name.IsEmpty()
+			? ESlateVisibility::HitTestInvisible : ESlateVisibility::Collapsed);
+	}
 
-    // 1. Cooldown Logic
-    float Remaining = IRTSCommandInterface::Execute_GetCooldownRemaining(ContextActor.Get(), ButtonData->CommandTag);
-    bool bCurrentlyCooling = Remaining > 0.0f;
+	CommandState = ResolveCommandState();
+	const FRTSCommandState& State = CommandState;
+	SetVisibility(!State.bVisible || (!State.bAvailable && ButtonData->bHideIfUnavailable)
+		? ESlateVisibility::Hidden : ESlateVisibility::Visible);
+	SetIsDisabled(!ButtonData->bIsResearch && !State.bAvailable);
 
-    // Edge Detection: Cooldown Started (or Widget just initialized on active CD)
-    if (bCurrentlyCooling && !bIsCooldownActive)
-    {
-        if (CooldownMaterial && ButtonData->DefaultCooldown > 0.1f)
-        {
-            // Optional: Send Total Duration if needed for other effects (like shimmer speed)
-             CooldownMaterial->SetScalarParameterValue(FName("CD_TotalDuration"), ButtonData->DefaultCooldown);
-        }
+	UObject* CommandContext = ButtonData->CommandContext.Get();
+	const bool bHasCommandContext = CommandContext && CommandContext->Implements<URTSCommandInterface>();
+	if (!bHasCommandContext && ContextActor.IsValid() && ContextActor->Implements<URTSCommandInterface>())
+	{
+		const float Remaining = IRTSCommandInterface::Execute_GetCooldownRemaining(ContextActor.Get(), ButtonData->CommandTag);
+		const bool bCurrentlyCooling = Remaining > 0.0f;
+		if (bCurrentlyCooling && !bIsCooldownActive)
+		{
+			if (CooldownMaterial && ButtonData->DefaultCooldown > 0.1f)
+				CooldownMaterial->SetScalarParameterValue(FName("CD_TotalDuration"), ButtonData->DefaultCooldown);
+			if (CooldownImage) CooldownImage->SetVisibility(ESlateVisibility::HitTestInvisible);
+		}
+		else if (!bCurrentlyCooling && bIsCooldownActive)
+		{
+			if (CooldownImage) CooldownImage->SetVisibility(ESlateVisibility::Hidden);
+		}
+		if (bCurrentlyCooling && CooldownMaterial)
+		{
+			const float Total = FMath::Max(ButtonData->DefaultCooldown, 0.001f);
+			const float Phase = FMath::Clamp(Remaining / Total, 0.0f, 1.0f);
+			CooldownMaterial->SetScalarParameterValue(FName("CD_Phase"), Phase);
+			CooldownMaterial->SetScalarParameterValue(FName("CD_EndTime"), Phase);
+		}
+		bIsCooldownActive = bCurrentlyCooling;
 
-        if (CooldownImage) CooldownImage->SetVisibility(ESlateVisibility::HitTestInvisible);
-    }
-    // Edge Detection: Cooldown Ended
-    else if (!bCurrentlyCooling && bIsCooldownActive)
-    {
-        if (CooldownImage) CooldownImage->SetVisibility(ESlateVisibility::Hidden);
-    }
+		if (ButtonData->bAllowAutoCast && AutoCastBorder)
+		{
+			const bool bEnabled = IRTSCommandInterface::Execute_IsAutoCastEnabled(ContextActor.Get(), ButtonData->CommandTag);
+			AutoCastBorder->SetVisibility(bEnabled ? ESlateVisibility::HitTestInvisible : ESlateVisibility::Hidden);
+		}
+	}
+	else if (ButtonData->bAllowAutoCast && AutoCastBorder)
+	{
+		const bool bEnabled = ButtonData->IsAutoCastEnabledForContext(this, GetOwningPlayer());
+		AutoCastBorder->SetVisibility(bEnabled ? ESlateVisibility::HitTestInvisible : ESlateVisibility::Hidden);
+	}
 
-    if (bCurrentlyCooling && CooldownMaterial)
-    {
-        // Calculate Phase (0.0 to 1.0)
-        float Total = FMath::Max(ButtonData->DefaultCooldown, 0.001f);
-        float Phase = FMath::Clamp(Remaining / Total, 0.0f, 1.0f);
-        
-        // Protocol Change: Send normalized "CD_Phase"
-        CooldownMaterial->SetScalarParameterValue(FName("CD_Phase"), Phase);
-        CooldownMaterial->SetScalarParameterValue(FName("CD_EndTime"), Phase);
-    }
-
-    bIsCooldownActive = bCurrentlyCooling;
-
-
-        // 2. Auto-Cast
-        if (ButtonData->bAllowAutoCast && AutoCastBorder)
-        {
-             bool bEnabled = IRTSCommandInterface::Execute_IsAutoCastEnabled(ContextActor.Get(), ButtonData->CommandTag);
-             // Flash or Show
-             AutoCastBorder->SetVisibility(bEnabled ? ESlateVisibility::HitTestInvisible : ESlateVisibility::Hidden);
-        }
-    }
-else if (ButtonData)
-{
-    const bool bAvailable = ButtonData->IsAvailableForContext(this, GetOwningPlayer());
-    SetVisibility(!bAvailable && ButtonData->bHideIfUnavailable
-        ? ESlateVisibility::Hidden : ESlateVisibility::Visible);
-    SetIsDisabled(!bAvailable);
-    if (ButtonData->bAllowAutoCast && AutoCastBorder)
-    {
-        const bool bEnabled = ButtonData->IsAutoCastEnabledForContext(this, GetOwningPlayer());
-        AutoCastBorder->SetVisibility(bEnabled ? ESlateVisibility::HitTestInvisible : ESlateVisibility::Hidden);
-    }
-}
-
-if (ButtonData && QueueCountText)
-{
-	const int32 QueueCount = ButtonData->GetQueueCountForContext(this, ContextActor.Get());
-	QueueCountText->SetText(FText::AsNumber(QueueCount));
-	QueueCountText->SetVisibility(QueueCount > 0
-		? ESlateVisibility::HitTestInvisible
-		: ESlateVisibility::Collapsed);
-}
+	if (QueueCountText)
+	{
+		const int32 QueueCount = ButtonData->GetQueueCountForContext(this, ContextActor.Get());
+		QueueCountText->SetText(FText::AsNumber(QueueCount));
+		QueueCountText->SetVisibility(QueueCount > 0
+			? ESlateVisibility::HitTestInvisible : ESlateVisibility::Collapsed);
+	}
 }
 
 FReply URTSCommandButtonWidget::NativeOnMouseButtonDown(const FGeometry& InGeometry, const FPointerEvent& InMouseEvent)
@@ -507,8 +622,6 @@ void URTSCommandButtonWidget::HandleProgressClicked()
 	if (bCanCancelProgressItem && ProgressActionTarget
 		&& ProgressActionTarget->Implements<URTSCommandProgressController>())
 	{
-		// On provider acknowledgement the original moves home, or the copy is deleted.
-		bReturnOnCancel = true;
 		IRTSCommandProgressController::Execute_RequestCancelCommandProgressItem(ProgressActionTarget, ProgressItemId);
 	}
 }

@@ -5,6 +5,7 @@
 #include "CoreMinimal.h"
 #include "UObject/Interface.h"
 #include "Data/RTSCommandGridAsset.h"
+#include "Commands/RTSCommandRequirements.h"
 #include "RTSCommandInterface.generated.h"
 
 // This class does not need to be modified.
@@ -43,9 +44,25 @@ public:
     UFUNCTION(BlueprintNativeEvent, BlueprintCallable, Category = "RTS Command")
     void ToggleAutoCast(FGameplayTag CommandTag);
 
+    /** Read-only command result shared by the command button and tooltip. */
+    UFUNCTION(BlueprintNativeEvent, BlueprintCallable, Category = "RTS Command")
+    FRTSCommandState QueryCommandState(FGameplayTag CommandTag, FName SourceId = NAME_None);
+
+    /** State objects read by this command; UI retains its original dependency subscriptions. */
+    UFUNCTION(BlueprintNativeEvent, BlueprintCallable, Category = "RTS Command")
+    void GetCommandStateDependencies(FGameplayTag CommandTag, FName SourceId, TArray<UObject*>& OutDependencies);
+
+    /** Supplies existing state facts; the common evaluator owns condition composition. */
+    UFUNCTION(BlueprintNativeEvent, BlueprintCallable, Category = "RTS Command")
+    bool QueryCommandRequirementFact(const FRTSRequirementNode& Node, FName SourceId, FRTSRequirementFact& OutFact);
+
     // Returns true if the command can be performed given current state/requirements.
     UFUNCTION(BlueprintNativeEvent, BlueprintCallable, Category = "RTS Command")
-    bool IsCommandAvailable(FGameplayTag CommandTag);
+    bool IsCommandAvailable(FGameplayTag CommandTag, FName SourceId = NAME_None);
+
+    /** Optional live description from the command owner. Empty keeps the authored button tooltip. */
+    UFUNCTION(BlueprintNativeEvent, BlueprintCallable, Category = "RTS Command")
+    FText GetCommandDescription(FGameplayTag CommandTag, FName SourceId = NAME_None);
 
     // Executes the command with no target (Instant)
     UFUNCTION(BlueprintNativeEvent, BlueprintCallable, Category = "RTS Command")

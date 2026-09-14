@@ -30,6 +30,7 @@ public:
 	virtual void NativePreConstruct() override;
 	virtual void NativeConstruct() override;
 	virtual void NativeDestruct() override;
+	virtual void NativeTick(const FGeometry& MyGeometry, float InDeltaTime) override;
 
 protected:
 	virtual TSharedRef<SWidget> RebuildWidget() override;
@@ -41,7 +42,7 @@ protected:
 	UFUNCTION()
 	void OnControlGroupsUpdated(const FRTSControlGroupsView& View);
 
-	void OnCommandProgressChanged(AActor* ProgressProvider);
+	void OnCommandProgressChanged(UObject* ProgressProvider, FName SourceId, FGuid ResolvedId, bool bCancelled);
 
 	/**
 	* Class of the item widget to spawn in the list.
@@ -127,6 +128,8 @@ protected:
 	UProgressBar* ActiveProgress1;
 
 private:
+	FRTSTimedCommandInstance ActiveProgressItems[2];
+
 	void ApplySelectionPanelLayoutSettings();
 	void ApplyFixedPanelSlotLayout();
 	FVector2D CalculateFixedPanelSize() const;
@@ -159,16 +162,24 @@ private:
 	FVector2D SelectionButtonSize = FVector2D(144.0f, 144.0f);
 	FMargin SelectionSlotPadding = FMargin(4.0f);
 	bool bHasAssignedControlGroups = false;
-	TWeakObjectPtr<AActor> DisplayedProgressProvider;
+	UPROPERTY(Transient)
+	TObjectPtr<UTextBlock> HealthValueTextWidget;
+
+	UPROPERTY(Transient)
+	TObjectPtr<UProgressBar> HealthBarWidget;
+
 	FRTSUnitData DisplayedSingleUnitData;
 	FDelegateHandle CommandProgressChangedHandle;
+	FDelegateHandle UnitHealthChangedHandle;
 
 	void RefreshGrid(const FRTSSelectionView& View);
 	void ShowEmptyContent();
 	void ShowSingleContent(const FRTSUnitData& Data);
 	void ShowGridContent(const FRTSSelectionView& View);
-	void ShowCommandProgressItems(const FRTSUnitData& OwnerData);
+	void ShowCommandProgressItems(const FRTSUnitData& OwnerData, FGuid ResolvedId = FGuid(), bool bCancelled = false);
 	void RefreshSingleUnitDetail(const FRTSUnitData& Data);
+	void RefreshSingleUnitHealth(const FRTSUnitData& Data);
+	void OnUnitHealthChanged(const FEntityHandle& Entity, float CurrentHealth, float MaximumHealth);
 	void RefreshSingleUnitActivity(const FRTSUnitData& Data);
 	void HideGridSlots();
 	UWidget* FindDescendantWidgetByName(UWidget* RootWidget, FName WidgetName) const;

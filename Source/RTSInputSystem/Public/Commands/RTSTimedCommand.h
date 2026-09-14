@@ -92,6 +92,15 @@ struct RTSINPUTSYSTEM_API FRTSTimedCommandInstance
 	{
 		return FMath::Max(0.0f, DurationSeconds - ElapsedSeconds);
 	}
+
+	/** Presentation only: time passing never submits a command or completes a task. */
+	float GetProgress01AtTick(int32 CurrentTick) const
+	{
+		if (CurrentTick == INDEX_NONE || State != ERTSTimedCommandState::Active || SimulationStartTick == INDEX_NONE
+			|| SimulationEndTick <= SimulationStartTick) return GetProgress01();
+		return FMath::Clamp(static_cast<float>(static_cast<double>(CurrentTick) - SimulationStartTick)
+			/ static_cast<float>(static_cast<double>(SimulationEndTick) - SimulationStartTick), 0.0f, 1.0f);
+	}
 };
 
 // The state transition used by every timed command. These functions only

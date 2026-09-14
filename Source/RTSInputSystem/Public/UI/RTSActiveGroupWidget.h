@@ -12,6 +12,7 @@ class AMassBattleAgentRenderer;
 class URTSUnitIconWidget;
 class UImage;
 class UNiagaraComponent;
+class UNiagaraSystem;
 class UPointLightComponent;
 class USceneCaptureComponent2D;
 class UTextureRenderTarget2D;
@@ -24,6 +25,11 @@ UCLASS(BlueprintType, Blueprintable)
 class RTSINPUTSYSTEM_API URTSActiveGroupWidget : public UUserWidget
 {
 	GENERATED_BODY()
+
+public:
+	/** Prepare portrait resources during HUD/world loading; repeated calls reuse them. */
+	UFUNCTION(BlueprintCallable, Category = "RTS Selection|Portrait")
+	bool PrepareLivePortraitResources();
 
 protected:
 	virtual TSharedRef<SWidget> RebuildWidget() override;
@@ -83,6 +89,10 @@ protected:
 	UPROPERTY(Transient)
 	TObjectPtr<UNiagaraComponent> PortraitPreviewComponent;
 
+	/** One retained preview per actual Niagara system, shared by units using that system. */
+	UPROPERTY(Transient)
+	TMap<TObjectPtr<UNiagaraSystem>, TObjectPtr<UNiagaraComponent>> PortraitPreviewComponents;
+
 	UPROPERTY(Transient)
 	TObjectPtr<UPointLightComponent> PortraitKeyLightComponent;
 
@@ -92,9 +102,13 @@ protected:
 	/** Existing selected unit supplies renderer and animation data. Never owned or mutated. */
 	FEntityHandle PortraitSourceEntity;
 	TWeakObjectPtr<AMassBattleAgentRenderer> PortraitSourceRenderer;
+	TWeakObjectPtr<UWorld> PortraitPreparedWorld;
+	FDelegateHandle PortraitActorSpawnedHandle;
 
 	bool StartSelectedUnitPortrait(const FRTSUnitData& Data);
 	bool EnsurePortraitCaptureResources();
+	void PreparePortraitPreviewComponent(AMassBattleAgentRenderer* Renderer);
+	void HandlePortraitActorSpawned(AActor* Actor);
 	bool EnsurePortraitPreviewComponent(AMassBattleAgentRenderer* Renderer);
 	bool UpdatePortraitPreview();
 	void ApplyLivePortraitBrush();

@@ -11,8 +11,14 @@
 
 class URTSCommandGridAsset;
 class AActor;
+class UMassBattleBPTaskAgentsMoveTo;
+class UMassBattleBPTaskAgentsChaseAttack;
 struct FEntityHandle;
 struct FMassBattleNetCommand;
+
+/** Binds business observers to the original native tasks before any task activates. */
+using FRTSCommandTasksPrepared = TFunction<void(
+	const TArray<UMassBattleBPTaskAgentsMoveTo*>&, UMassBattleBPTaskAgentsChaseAttack*)>;
 
 DECLARE_MULTICAST_DELEGATE_TwoParams(FOnRTSNavigationRequested, URTSCommandGridAsset*, AActor*);
 DECLARE_MULTICAST_DELEGATE_TwoParams(FOnRTSCommandIssued, FGameplayTag, AActor*);
@@ -51,6 +57,16 @@ public:
 	/** 发送目标实体指令（用于攻击锁定） */
 	void IssueCommandWithTarget(FGameplayTag Tag, AActor* TargetActor);
 
+	/** Shared player/AI input. Explicit entities never depend on the current selection.
+	 * Task observers belong to an accepted command's execution, not its network payload. */
+	static bool IssueCommandForEntities(UObject* WorldContext, FGameplayTag Tag,
+		const TArray<FEntityHandle>& Entities, const FVector* Location = nullptr,
+		FEntityHandle Target = FEntityHandle(), bool bQueue = false,
+		ERTSMoveNavigationScale NavigationScale = ERTSMoveNavigationScale::Auto,
+		const FRTSCommandTasksPrepared& TasksPrepared = {},
+		bool bTargetBehaviorsCanInterrupt = false, float AcceptanceRadiusOverride = 0.0f,
+		bool* bNavigationRejected = nullptr);
+
 	/** Returns the common live order for the supplied Mass selection. Mixed orders return an empty tag. */
 	FGameplayTag GetActiveCommandTag(const TArray<FEntityHandle>& Entities) const;
 
@@ -82,14 +98,15 @@ private:
 	TSet<FEntityHandle> ActiveQueuedLocationEntities;
 
 	TArray<FEntityHandle> GetSelectedMassEntities() const;
-	TArray<FEntityHandle> FilterEntitiesForCommand(
+	static TArray<URTSCommandSubsystem*> GetWorldCommandOwners(UObject* WorldContext);
+	static TArray<FEntityHandle> FilterEntitiesForCommand(UObject* WorldContext,
 		const TArray<FEntityHandle>& Entities,
 		FGameplayTag Tag,
 		bool bHasLocation,
-		bool bHasTargetActor) const;
+		bool bHasTargetActor);
 	FGameplayTag ResolveEntityCommandTag(const FEntityHandle& Entity) const;
 	void RecordCommandTag(const TArray<FEntityHandle>& Entities, FGameplayTag Tag);
-	void SubmitLockstepCommand(FGameplayTag Tag, const TArray<FEntityHandle>& Entities,
+	bool SubmitLockstepCommand(FGameplayTag Tag, const TArray<FEntityHandle>& Entities,
 		const FVector* Location, FEntityHandle Target, bool bQueue, ERTSMoveNavigationScale Scale);
 	void ExecuteCommand(
 		FGameplayTag Tag,
@@ -116,13 +133,14 @@ private:
 	void HandleMoveTaskTransferred(const TArray<FEntityHandle>& Entities);
 
 	bool IsEntityMoving(const FEntityHandle& Entity) const;
-	bool IssueMoveTo(
+	static bool IssueMoveTo(UObject* WorldContext,
 		const TArray<FEntityHandle>& SelectedEntities,
 		const FVector& Location,
 		bool bCanInterrupt,
-		ERTSMoveNavigationScale NavigationScale);
-	ERTSMoveNavigationScale ResolveNavigationScale(
-		const TArray<FEntityHandle>& Entities,
-		ERTSMoveNavigationScale RequestedScale) const;
-	bool IssueAttackTarget(const TArray<FEntityHandle>& SelectedEntities, FEntityHandle TargetHandle);
+		ERTSMoveNavigationScale NavigationScale,
+		const FRTSCommandTasksPrepared& TasksPrepared = {}, float AcceptanceRadiusOverride = 0.0f,
+		bool* bNavigationRejected = nullptr);
+	static bool IssueAttackTarget(UObject* WorldContext,
+		const TArray<FEntityHandle>& SelectedEntities, FEntityHandle TargetHandle,
+		const FRTSCommandTasksPrepared& TasksPrepared, bool bTargetBehaviorsCanInterrupt);
 };

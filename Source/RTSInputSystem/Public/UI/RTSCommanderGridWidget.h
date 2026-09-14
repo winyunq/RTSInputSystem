@@ -60,6 +60,11 @@ protected:
 	TArray<TObjectPtr<class USizeBox>> GridSlots;
 
 	UPROPERTY(Transient)
+	TArray<TObjectPtr<class UTextBlock>> GridHotkeyLabels;
+
+	void UpdateSlotHotkey(int32 SlotIndex);
+
+	UPROPERTY(Transient)
 	TArray<TObjectPtr<URTSCommandButtonWidget>> CommandButtonInstances;
 
 	/** Widget ownership only. Timing, capacity and cancellation remain in the existing command providers. */
@@ -156,6 +161,8 @@ protected:
     UPROPERTY()
     TObjectPtr<class URTSTooltipWidget> SharedTooltip;
 
+	TWeakObjectPtr<URTSCommandButtonWidget> HoveredTooltipButton;
+
 public:
     // Called by child buttons
     void NotifyButtonHovered(URTSCommandButtonWidget* Btn, URTSCommandButton* Data);
@@ -171,7 +178,8 @@ public:
 	FMargin GetSlotPadding() const { return SlotPadding; }
 
 	URTSCommandButtonWidget* AcquireResearchButton(const FRTSTimedCommandInstance& Item, const FRTSUnitData& Owner);
-	void ReleaseFinishedResearchButtons(const FRTSUnitData& Owner);
+	void ReleaseFinishedResearchButtons(const FRTSUnitData& Owner,
+		FGuid ResolvedId = FGuid(), bool bCancelled = false);
 
 	URTSCommandButton* FindDisplayedCommandButton(FGameplayTag Tag) const
 	{

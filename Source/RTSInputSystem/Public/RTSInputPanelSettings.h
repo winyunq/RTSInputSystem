@@ -57,6 +57,14 @@ struct FRTSMassUnitCommandSlotDefinition
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "RTS Mass Unit Protocol")
 	FName CommandTagName;
 
+	/** Uses the command button's existing timed-progress presentation. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "RTS Mass Unit Protocol")
+	bool bIsResearch = false;
+
+	/** Copy this button into progress instead of moving its original instance. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "RTS Mass Unit Protocol")
+	bool bRepeatableResearch = false;
+
 	/** Optional command loadout opened by this button. When set, the button navigates instead of issuing CommandTag. */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "RTS Mass Unit Protocol")
 	FName SubMenuLoadoutId;

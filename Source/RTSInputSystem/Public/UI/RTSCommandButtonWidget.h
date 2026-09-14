@@ -27,6 +27,9 @@ class RTSINPUTSYSTEM_API URTSCommandButtonWidget : public UUserWidget
 public:
 	
 	virtual void NativeConstruct() override;
+	virtual void NativeDestruct() override;
+    virtual void NativeOnMouseEnter(const FGeometry& InGeometry, const FPointerEvent& InMouseEvent) override;
+    virtual void NativeOnMouseLeave(const FPointerEvent& InMouseEvent) override;
     virtual FReply NativeOnMouseButtonDown(const FGeometry& InGeometry, const FPointerEvent& InMouseEvent) override;
 
 	UFUNCTION(BlueprintCallable, Category = "RTS Command")
@@ -34,6 +37,9 @@ public:
 
 	/** Shows the same command button inside a production/research activity slot. */
 	void InitProgressItem(const FRTSTimedCommandInstance& ProgressItem, AActor* InContext, float IconSize = 144.0f);
+	/** Prepares a reusable empty queue frame with its fixed position as the default face. */
+	void InitEmptyProgressSlot(int32 SlotNumber, float IconSize);
+	void BindCommandState(const TArray<FRTSUnitData>& Owners);
 
 	/** Returns the underlying data asset for this button. */
     UFUNCTION(BlueprintCallable, Category = "RTS Command")
@@ -51,8 +57,13 @@ public:
 	/** Mirrors the physical pressed/released state of the keyboard shortcut. */
 	void SetKeyboardPressed(bool bPressed);
 
-	/** Explicit state pull used only by the owning command card. */
-	void RefreshCommandState();
+	/** Updates this button from its bound command state. */
+	virtual void RefreshCommandState();
+
+	/** Description saved when this button was bound or its command state changed. */
+	FText GetTooltipDescription() const;
+	const FRTSCommandState& GetTooltipState() const { return CommandState; }
+	const FKey& GetCommandHotkey() const { return CommandHotkey; }
 
 	// Event for click
 	UPROPERTY(BlueprintAssignable, Category = "RTS Command")
@@ -71,10 +82,6 @@ protected:
     UPROPERTY(meta = (BindWidget))
     TObjectPtr<UImage> CooldownImage;
 
-    // Hotkey Display
-    UPROPERTY(meta = (BindWidget))
-    TObjectPtr<class UTextBlock> HotkeyText;
-
 	UPROPERTY(meta = (BindWidgetOptional))
 	TObjectPtr<class UTextBlock> DisplayNameText;
 
@@ -82,7 +89,7 @@ protected:
     UPROPERTY(meta = (BindWidgetOptional))
     TObjectPtr<UImage> AutoCastBorder;
 
-	/** Optional numeric badge used by queued commands such as unit production. */
+	/** Command count, or the centered default number on an empty queue frame. */
 	UPROPERTY(meta = (BindWidgetOptional))
 	TObjectPtr<class UTextBlock> QueueCountText;
 
@@ -101,10 +108,17 @@ protected:
 	bool bCanCancelProgressItem = false;
 	bool bResearchCopy = false;
 	bool bReturnOnCancel = false;
+	bool bProgressResolved = false;
 	FKey CommandHotkey;
 	FEntityHandle CommandOwnerEntity;
 	FEntityHandle ProgressOwnerEntity;
 	TWeakObjectPtr<AActor> ProgressOwnerActor;
+	TArray<TPair<TWeakObjectPtr<UObject>, FName>> BoundProgressSources;
+	TArray<TWeakObjectPtr<UObject>> CommandStateDependencies;
+	FRTSCommandState CommandState;
+	FRTSCommandState ResolveCommandState() const;
+	void SubscribeCommandState();
+	void OnCommandProgressChanged(UObject* Provider, FName SourceId, FGuid ResolvedId, bool bCancelled);
 
     // State tracking for efficient updates
 	bool bIsCooldownActive = false;

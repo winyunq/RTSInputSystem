@@ -71,7 +71,7 @@ struct FRTSSelectionQuery
  * Unified data structure representing a single selectable unit OR a group summary.
  */
 USTRUCT(BlueprintType)
-struct FRTSUnitData
+struct RTSINPUTSYSTEM_API FRTSUnitData
 {
 	GENERATED_BODY()
 
@@ -176,6 +176,21 @@ struct FRTSUnitData
 	 */
 	UPROPERTY(BlueprintReadOnly, Category = "RTS Selection|Activity")
 	TArray<FRTSTimedCommandInstance> CommandProgressItems;
+
+	/** Independent command/task owner, including components shared by several units. */
+	UPROPERTY(Transient, BlueprintReadOnly, Category = "RTS Selection|Activity")
+	TObjectPtr<UObject> CommandContext = nullptr;
+
+	/** Identity used by the common progress query and notification, independent of command input context. */
+	UPROPERTY(Transient, BlueprintReadOnly, Category = "RTS Selection|Activity")
+	TObjectPtr<UObject> ProgressProvider = nullptr;
+
+	UPROPERTY(Transient, BlueprintReadOnly, Category = "RTS Selection|Activity")
+	FName ProgressSourceId = NAME_None;
+
+	UObject* GetProgressProvider() const;
+	bool MatchesProgressSource(UObject* Provider, FName SourceId) const;
+	bool RefreshCommandProgress();
 
 	UPROPERTY(BlueprintReadOnly, Category = "RTS Selection|Activity")
 	FText ActivityLabel;

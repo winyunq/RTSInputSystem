@@ -25,5 +25,5 @@ class RTSINPUTSYSTEM_API IRTSCommandProgressProvider
 public:
 	UFUNCTION(BlueprintNativeEvent, BlueprintCallable, Category = "RTS Progress")
 	void GetCommandProgressItems(
-		UPARAM(ref) TArray<FRTSTimedCommandInstance>& OutItems) const;
+		UPARAM(ref) TArray<FRTSTimedCommandInstance>& OutItems, FName SourceId = NAME_None) const;
 };
