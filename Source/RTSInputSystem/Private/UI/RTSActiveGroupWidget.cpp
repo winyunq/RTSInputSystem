@@ -220,7 +220,9 @@ bool URTSActiveGroupWidget::StartSelectedUnitPortrait(const FRTSUnitData& Data)
 		return false;
 	}
 
-	PortraitCaptureComponent->CaptureScene();
+	// A selection change may display the previous portrait until the next main view.
+	// Use the engine's deferred capture queue; do not force World end-of-frame updates here.
+	PortraitCaptureComponent->CaptureSceneDeferred();
 	ApplyLivePortraitBrush();
 	return true;
 }
@@ -542,8 +544,6 @@ bool URTSActiveGroupWidget::UpdatePortraitPreview()
 		: FVector3f(PreviewScale);
 
 	PortraitPreviewComponent->SetWorldLocation(PreviewStageLocation);
-	PortraitPreviewComponent->SetSystemFixedBounds(
-		FBox(FVector(-50000.0), FVector(50000.0)));
 	PortraitPreviewComponent->SetVariableStaticMesh(
 		TEXT("AgentMesh"),
 		Renderer->AgentMesh);
@@ -582,13 +582,15 @@ bool URTSActiveGroupWidget::UpdatePortraitPreview()
 	}
 	if (Batch->bUseMeshIndexArray)
 	{
+		// Preserve the portrait LOD limit for meshes that only provide LOD0.
 		const int32 RequestedLOD = Batch->CurrentLODArray.IsValidIndex(SourceIndex)
 			? Batch->CurrentLODArray[SourceIndex]
 			: 0;
 		UNiagaraDataInterfaceArrayFunctionLibrary::SetNiagaraArrayInt32(
 			PortraitPreviewComponent,
 			FName("MeshIndex_Array"),
-			TArray<int32>{Renderer->GetRenderableMeshIndex(RequestedLOD)});
+			TArray<int32>{FMath::Clamp(
+				RequestedLOD, 0, FMath::Max(Renderer->AgentMesh->GetNumLODs() - 1, 0))});
 	}
 	if (Batch->bUseStyleArray)
 	{
@@ -738,7 +740,9 @@ void URTSActiveGroupWidget::CapturePortraitFrame()
 		return;
 	}
 
-	PortraitCaptureComponent->CaptureScene();
+	// Reuse the last image while the engine coalesces and submits this capture.
+	// Deferred capture still shares the render thread; it is not a separate GPU queue.
+	PortraitCaptureComponent->CaptureSceneDeferred();
 }
 
 void URTSActiveGroupWidget::ApplyStaticPortrait(UTexture2D* Texture)

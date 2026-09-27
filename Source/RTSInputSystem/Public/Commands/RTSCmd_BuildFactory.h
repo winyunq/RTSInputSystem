@@ -31,14 +31,14 @@ public:
         
 		DisplayName = FText::FromString(TEXT("建造工厂"));
 		
-		FString DescStr = TEXT("建造一座1×1格工厂。命令来源不限，只要工厂中心位于任意己方城市或己方工业园的工业范围内即可；施工需要180秒（约6个游戏月），完工前不提供GDP；一级工厂在平原提供7 GDP，在山地提供5 GDP。<n/><n/><RichText.Yellow>定位： 经济。</>");
+		FString DescStr = TEXT("消耗75现金和365材料，建造一座1×1格工厂。命令来源不限，只要工厂中心位于任意己方城市或己方工业园的工业范围内即可；施工需要180秒（约6个游戏月），完工前不提供GDP；一级工厂在平原提供7 GDP，在山地提供5 GDP。<n/><n/><RichText.Yellow>定位： 经济。</>");
         // Formatting fixes for XML/RichText
 		Description = FText::FromString(DescStr);
 
 		PreferredIndex = 5; // Row 2, Col 1
 		DefaultCooldown = 0.0f;
 		bAllowAutoCast = false;
-		LowValueCost = 365;
+		LowValueCost = 75;
 		PlacementFootprintCells = FIntPoint(1, 1);
 		PlacementPreviewMesh = TSoftObjectPtr<UStaticMesh>(FSoftObjectPath(TEXT(
 			"/Game/Unit/Actor/Building/Economics/Factory/Common_IndustrialFactory_Workshop/SM_Common_IndustrialFactory_Workshop.SM_Common_IndustrialFactory_Workshop")));

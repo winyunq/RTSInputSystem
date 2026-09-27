@@ -55,7 +55,7 @@ public:
 		bool bForceStrategicNavigation = false);
 
 	/** 发送目标实体指令（用于攻击锁定） */
-	void IssueCommandWithTarget(FGameplayTag Tag, AActor* TargetActor);
+	void IssueCommandWithTarget(FGameplayTag Tag, const FEntityHandle& TargetEntity);
 
 	/** Shared player/AI input. Explicit entities never depend on the current selection.
 	 * Task observers belong to an accepted command's execution, not its network payload. */
@@ -76,6 +76,8 @@ public:
 		OnNavigationRequested.Broadcast(NewGrid, Context);
 	}
 
+
+	void IssueCommandWithEntityTarget(FGameplayTag Tag, const FEntityHandle& TargetEntity);
 protected:
 	virtual void Initialize(FSubsystemCollectionBase& Collection) override;
 	virtual void Deinitialize() override;

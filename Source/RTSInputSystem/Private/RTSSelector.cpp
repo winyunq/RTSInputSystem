@@ -42,6 +42,8 @@
 #include "HAL/IConsoleManager.h"
 #include "Rendering/DrawElements.h"
 #include "Widgets/SLeafWidget.h"
+#include "MassAPISubsystem.h"
+#include "Fragments/Team.h"
 
 DECLARE_STATS_GROUP(TEXT("RTS Input Feedback"), STATGROUP_RTSInputFeedback, STATCAT_Advanced);
 DECLARE_CYCLE_STAT(
@@ -1476,7 +1478,9 @@ void URTSSelector::HandleControlGroupHotkey(int32 GroupIndex)
 
 	const double CurrentTime = GetWorld() ? GetWorld()->GetRealTimeSeconds() : 0.0;
 	const URTSInputPanelSettings* Settings = GetDefault<URTSInputPanelSettings>();
-	const double DoubleTapTime = Settings ? FMath::Max(0.1f, Settings->ControlGroupDoubleTapTime) : 0.3;
+	const double DoubleTapTime = Settings ? FMath::Max(0.1, Settings->GetPlayerSettingNumber(
+		TEXT("GetControlGroupDoubleTapTimeIndex"),
+		Settings->ControlGroupDoubleTapTime)) : 0.3;
 	if (LastRecalledControlGroupIndex == GroupIndex && CurrentTime - LastControlGroupRecallTime <= DoubleTapTime)
 	{
 		Selection->RequestControlGroupFocus(GroupIndex);
@@ -1711,9 +1715,9 @@ bool URTSSelector::IsCommandQueueModifierDown() const
 bool URTSSelector::CommitPendingTargetingAtCursor()
 {
 	if (!bIsTargeting || !PlayerController)
-	{
+	
 		return false;
-	}
+	
 
 	if (bIsHashGridSelecting)
 	{
@@ -1722,16 +1726,17 @@ bool URTSSelector::CommitPendingTargetingAtCursor()
 	}
 
 	FHitResult Hit;
-	PlayerController->GetHitResultUnderCursor(ECC_Visibility, false, Hit);
-	if (!IssuePendingTargetingCommand(Hit))
-	{
+	 if (PendingTargetType != ERTSCommandTargetType::TargetActor)
+	    { PlayerController->GetHitResultUnderCursor(ECC_Visibility, false, Hit);
+	 } if (!IssuePendingTargetingCommand(Hit))
+	
 		return false;
-	}
+	
 
 	if (!IsCommandQueueModifierDown())
-	{
+	
 		CancelTargeting();
-	}
+	
 	return true;
 }
 
@@ -1765,93 +1770,116 @@ bool URTSSelector::CommitPendingTargetingAtWorldLocation(FVector WorldLocation)
 	return true;
 }
 
-bool URTSSelector::ResolveSmartCommandHit(FHitResult& OutHit, bool& bOutHostileUnitTarget) const
+bool URTSSelector::ResolveSmartCommandHit(FHitResult& OutHit,  FEntityHandle& OutEntityTarget, bool& bOutHostileUnitTarget) const
 {
-	OutHit = FHitResult();
+	OutHit = FHitResult ();
+		OutEntityTarget = FEntityHandle ();
 	bOutHostileUnitTarget = false;
-	if (!PlayerController || !GetWorld())
-	{
+	if (!PlayerController || !GetWorld() || !PlayerController->PlayerCameraManager )
+	
 		return false;
-	}
-
-	FVector RayOrigin = FVector::ZeroVector;
+	
+	const bool bUnitTargetOnly =
+		 bIsTargeting && PendingTargetType == ERTSCommandTargetType::TargetActor;
+	const bool bAcceptAnyUnit = bUnitTargetOnly
+	        || (bIsTargeting && PendingTargetType == ERTSCommandTargetType::LocationOrTarget)
+	;
+		FVector2D MousePosition = FVector2D::ZeroVector;
+		if (!PlayerController->GetMousePosition(MousePosition.X, MousePosition.Y)
+			)
+		
+			return false;
+		
+		const URTSInputPanelSettings* Settings = GetDefault<URTSInputPanelSettings>();
+		const float HalfSize = FMath::Clamp(
+			Settings ? Settings->SelectionClickHalfSizePixels : 3.0f,
+			1.0f,
+			12.0f);
+		FViewTracePoints TracePoints;
+		TracePoints.ViewPoint = PlayerController->PlayerCameraManager->GetCameraLocation();
+		auto AddSelectionPoint = [this, &TracePoints](const float X, const float Y)
+		{
+			FVector WorldPosition = FVector::ZeroVector;
+			FVector WorldDirection = FVector::ForwardVector;
+			if (PlayerController->DeprojectScreenPositionToWorld(
+				X, Y, WorldPosition, WorldDirection))
+			{
+				TracePoints.SelectionPoints.Add(
+					WorldPosition + WorldDirection * 100000.0f);
+			}
+		};
+		AddSelectionPoint(MousePosition.X - HalfSize, MousePosition.Y - HalfSize);
+		AddSelectionPoint(MousePosition.X - HalfSize, MousePosition.Y + HalfSize);
+		AddSelectionPoint(MousePosition.X + HalfSize, MousePosition.Y + HalfSize);
+		AddSelectionPoint(MousePosition.X + HalfSize, MousePosition.Y - HalfSize);
+		if (TracePoints.SelectionPoints.Num() != 4)
+		
+			return false;
+		
+		bool bHitMass = false;
+		TArray<FTraceResult> Results;
+		UMassBattleFuncLib::ViewTraceForAgents(
+			PlayerController,
+			bHitMass,
+			Results,
+			1,
+			TracePoints,
+			false,
+			FVector::ZeroVector,
+			1.0f,
+			ESortMode::NearToFar,
+			TracePoints.ViewPoint);
+		if ( bHitMass && ! Results.IsEmpty())
+		{
+			
+		const FTraceResult& Result = Results[0];
+		 UMassAPISubsystem* Mass = UMassAPISubsystem::GetPtr(this);
+		        const FTeam* Team = Mass && Mass->IsValid(Result.Entity)
+		            ? Mass->GetFragmentPtr<FTeam>(Result.Entity) : nullptr;
+		        ULocalPlayer* LocalPlayer = PlayerController->GetLocalPlayer();
+		        const URTSSelectionSubsystem* Selection = LocalPlayer
+		            ? LocalPlayer->GetSubsystem<URTSSelectionSubsystem>() : nullptr;
+		        const int32 PlayerTeam = Selection ? Selection->GetPlayerTeamIndex() : INDEX_NONE;
+		        bOutHostileUnitTarget = Team && PlayerTeam != INDEX_NONE
+		            && Team->index != INDEX_NONE && Team->index != PlayerTeam;
+		        if (bAcceptAnyUnit || bOutHostileUnitTarget)
+		        { OutEntityTarget =
+			 Result.Entity;
+		OutHit.bBlockingHit = true ;
+		            OutHit.Location = Result.EntityLocation;
+		            OutHit.ImpactPoint = OutHit.Location ;
+		return true;
+	 } }
+	 if (bUnitTargetOnly) return false; FVector RayOrigin = FVector::ZeroVector;
 	FVector RayDirection = FVector::ForwardVector;
 	if (!PlayerController->DeprojectMousePositionToWorld(RayOrigin, RayDirection))
-	{
+	
 		return false;
-	}
+	
 
 	constexpr float SmartCommandTraceDistance = 1000000.0f;
 	const FVector RayEnd = RayOrigin + RayDirection * SmartCommandTraceDistance;
 	FCollisionQueryParams QueryParams(SCENE_QUERY_STAT(RTSSmartCommand), true);
 	QueryParams.bReturnPhysicalMaterial = false;
 
-	URTSSelectionSubsystem* Selection = nullptr;
-	if (ULocalPlayer* LocalPlayer = PlayerController->GetLocalPlayer())
-	{
-		Selection = LocalPlayer->GetSubsystem<URTSSelectionSubsystem>();
-	}
-
-	const int32 PlayerTeam = Selection
-		? Selection->GetPlayerTeamIndex()
-		: INDEX_NONE;
-	for (int32 Pass = 0; Pass < 32; ++Pass)
-	{
+	
 		FHitResult Candidate;
-		if (!GetWorld()->LineTraceSingleByChannel(
+		if (GetWorld()->LineTraceSingleByChannel(
 			Candidate,
 			RayOrigin,
 			RayEnd,
 			ECC_Visibility,
 			QueryParams))
 		{
-			break;
-		}
-
-		AActor* HitActor = Candidate.GetActor();
-		if (!HitActor)
-		{
+			
+			// Mass unit targets are resolved by the selection query above.
+			// Only location commands reach this terrain fallback.
+			// The terrain hit supplies a position, never a unit target.
 			OutHit = Candidate;
-			return true;
+			        return true;
 		}
 
-		int32 HitTeam = INDEX_NONE;
-		bool bUnitHit = false;
-		if (const UMassBattleAgentComponent* MassAgent =
-			HitActor->FindComponentByClass<UMassBattleAgentComponent>())
-		{
-			bUnitHit = true;
-			HitTeam = MassAgent->TeamIndex;
-		}
-		else if (const URTSSelectable* Selectable =
-			HitActor->FindComponentByClass<URTSSelectable>())
-		{
-			bUnitHit = true;
-			HitTeam = Selectable->TeamIndex;
-		}
-
-		if (bUnitHit
-			&& PlayerTeam != INDEX_NONE
-			&& HitTeam != INDEX_NONE
-			&& HitTeam != PlayerTeam)
-		{
-			OutHit = Candidate;
-			bOutHostileUnitTarget = true;
-			return true;
-		}
-
-		if (bUnitHit || (Selection && Selection->IsActorSelected(HitActor)))
-		{
-			// Friendly/selected units are transparent to a context command. Re-run
-			// the cursor ray without this actor so the terrain or a hostile behind it
-			// can still receive the order.
-			QueryParams.AddIgnoredActor(HitActor);
-			continue;
-		}
-
-		OutHit = Candidate;
-		return true;
-	}
+		
 
 	// Empty sky still has a meaningful strategic-map destination. This keeps a
 	// context command composable even when no collision primitive occupies the cell.
@@ -1873,19 +1901,19 @@ bool URTSSelector::ResolveSmartCommandHit(FHitResult& OutHit, bool& bOutHostileU
 
 void URTSSelector::OnIssueCommand(const FInputActionValue& Value)
 {
-	if (!PlayerController) return;
-
-	FHitResult Hit;
-	PlayerController->GetHitResultUnderCursor(ECC_Visibility, false, Hit);
-
-	UE_LOG(LogTemp, Warning, TEXT("[RTSSelector] OnIssueCommand TRIGGERED! bBlockingHit: %d, Location: %s"), Hit.bBlockingHit, *Hit.Location.ToString());
+	 (void)Value; if (!PlayerController) return;
 
 	if (bIsTargeting)
 	{
 		if (bIsHashGridSelecting)
 		{
 			CancelHashGridSelection();
-			return;
+			return ;
+			        }
+			        FHitResult Hit;
+			        if (PendingTargetType != ERTSCommandTargetType::TargetActor)
+			        {
+			            PlayerController->GetHitResultUnderCursor(ECC_Visibility, false, Hit) ;
 		}
 
 		if (IssuePendingTargetingCommand(Hit) && !IsCommandQueueModifierDown())
@@ -1895,27 +1923,23 @@ void URTSSelector::OnIssueCommand(const FInputActionValue& Value)
 		return;
 	}
 
-	bool bHostileUnitTarget = false;
+	 FEntityHandle CommandEntityTarget; bool bHostileUnitTarget = false;
 	FHitResult CommandHit;
-	if (ResolveSmartCommandHit(CommandHit, bHostileUnitTarget))
+	if (ResolveSmartCommandHit(CommandHit , CommandEntityTarget , bHostileUnitTarget))
 	{
-		if (ULocalPlayer* LocalPlayer = PlayerController->GetLocalPlayer())
-		{
-			if (URTSSelectionSubsystem* SelectionSubsystem = LocalPlayer->GetSubsystem<URTSSelectionSubsystem>())
+		ULocalPlayer* LocalPlayer = PlayerController->GetLocalPlayer();URTSSelectionSubsystem* SelectionSubsystem =  LocalPlayer
+			            ? LocalPlayer->GetSubsystem<URTSSelectionSubsystem>() : nullptr;
+			        if (SelectionSubsystem )
 			{
-				const bool bQueueCommand = PlayerController->IsInputKeyDown(EKeys::LeftShift)
-					|| PlayerController->IsInputKeyDown(EKeys::RightShift);
-				AActor* HitActor = CommandHit.GetActor();
-				const FGameplayTag AttackTag = FGameplayTag::RequestGameplayTag(FName("RTS.Command.Attack"), false);
-				if (bHostileUnitTarget && HitActor)
+				
+				if (bHostileUnitTarget &&  CommandEntityTarget.IsSet())
+								{
+									SelectionSubsystem->IssueCommandWithEntityTarget(FGameplayTag::RequestGameplayTag(FName("RTS.Command.Attack"), false), CommandEntityTarget);
+								}
+								else 
 				{
-					SelectionSubsystem->IssueCommandWithTarget(AttackTag, HitActor);
-				}
-				else
-				{
-					const FGameplayTag MoveTag = FGameplayTag::RequestGameplayTag(FName("RTS.Command.Move"), false);
-					SelectionSubsystem->IssueCommandWithLocation(MoveTag, CommandHit.Location, bQueueCommand);
-				}
+					SelectionSubsystem->IssueCommandWithLocation( FGameplayTag::RequestGameplayTag(FName("RTS.Command.Move"), false), CommandHit.Location, IsCommandQueueModifierDown());
+				
 			}
 		}
 	}
@@ -1964,13 +1988,18 @@ bool URTSSelector::IssuePendingTargetingCommand(const FHitResult& Hit)
 		return false;
 	}
 
-	FHitResult ResolvedHit = Hit;
+	FHitResult ResolvedHit = Hit ;
+		FEntityHandle ResolvedEntityTarget ;
 	bool bHostileUnitTarget = false;
+	const bool bUnitTargetCommand =
+		PendingTargetType == ERTSCommandTargetType::TargetActor;
 	const bool bComposableCommand = IsSelectorComposableContextCommand(PendingCommandTag)
-		&& PendingTargetType != ERTSCommandTargetType::TargetActor;
-	if (bComposableCommand)
+		&& !bUnitTargetCommand;
+	if (bComposableCommand || bUnitTargetCommand
+	        || PendingTargetType == ERTSCommandTargetType::LocationOrTarget)
 	{
-		if (!ResolveSmartCommandHit(ResolvedHit, bHostileUnitTarget))
+		if (!ResolveSmartCommandHit(ResolvedHit , ResolvedEntityTarget , bHostileUnitTarget)
+			|| (bUnitTargetCommand && !ResolvedEntityTarget.IsSet()))
 		{
 			return false;
 		}
@@ -1989,23 +2018,14 @@ bool URTSSelector::IssuePendingTargetingCommand(const FHitResult& Hit)
 		return false;
 	}
 
-	AActor* HitActor = ResolvedHit.GetActor();
-	const bool bHasMassTarget = HitActor && HitActor->FindComponentByClass<UMassBattleAgentComponent>();
-	if (PendingTargetType == ERTSCommandTargetType::TargetActor)
-	{
-		if (!HitActor)
-		{
-			return false;
-		}
-		SelectionSubsystem->IssueCommandWithTarget(PendingCommandTag, HitActor);
-		return true;
-	}
-
-	if (PendingTargetType == ERTSCommandTargetType::LocationOrTarget
-		&& (bHostileUnitTarget || (!bComposableCommand && bHasMassTarget)))
-	{
-		SelectionSubsystem->IssueCommandWithTarget(PendingCommandTag, HitActor);
-		return true;
+	
+		 if (ResolvedEntityTarget.IsSet( )
+		         && (bUnitTargetCommand
+		             || (PendingTargetType == ERTSCommandTargetType::LocationOrTarget
+		                 && (bHostileUnitTarget || !bComposableCommand)) ))
+				{
+					SelectionSubsystem->IssueCommandWithEntityTarget(PendingCommandTag, ResolvedEntityTarget);
+					 return true;
 	}
 
 	if (PendingTargetType == ERTSCommandTargetType::Instant)
@@ -2014,8 +2034,8 @@ bool URTSSelector::IssuePendingTargetingCommand(const FHitResult& Hit)
 		return true;
 	}
 
-	const bool bQueueCommand = IsCommandQueueModifierDown();
-	SelectionSubsystem->IssueCommandWithLocation(PendingCommandTag, ResolvedHit.Location, bQueueCommand);
+	
+	SelectionSubsystem->IssueCommandWithLocation(PendingCommandTag, ResolvedHit.Location, IsCommandQueueModifierDown());
 	return true;
 }
 

@@ -196,7 +196,9 @@ void URTSControlGroupButton::HandleClicked()
 
 	const double CurrentTime = GetWorld() ? GetWorld()->GetRealTimeSeconds() : 0.0;
 	const URTSInputPanelSettings* Settings = GetDefault<URTSInputPanelSettings>();
-	const double DoubleClickTime = Settings ? FMath::Max(0.1f, Settings->ControlGroupDoubleTapTime) : 0.3;
+	const double DoubleClickTime = Settings ? FMath::Max(0.1, Settings->GetPlayerSettingNumber(
+		TEXT("GetControlGroupDoubleTapTimeIndex"),
+		Settings->ControlGroupDoubleTapTime)) : 0.3;
 	if (bCenterOnDoubleClick && CurrentTime - LastRecallClickTime <= DoubleClickTime)
 	{
 		Selection->RequestControlGroupFocus(ControlGroupIndex);

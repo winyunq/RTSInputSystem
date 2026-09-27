@@ -160,6 +160,7 @@ public:
 	UFUNCTION(BlueprintPure, Category = "RTSCamera - Hash Grid Selection")
 	bool IsHashGridSelectionActive() const { return bIsHashGridSelecting; }
 
+
 protected:
 	virtual void BeginPlay() override;
 	virtual void EndPlay(const EEndPlayReason::Type EndPlayReason) override;
@@ -314,7 +315,7 @@ private:
 	void CommitHashGridSelection();
 	bool IsCommandQueueModifierDown() const;
 	bool IssuePendingTargetingCommand(const FHitResult& Hit);
-	bool ResolveSmartCommandHit(FHitResult& OutHit, bool& bOutHostileUnitTarget) const;
+	bool ResolveSmartCommandHit(FHitResult& OutHit, FEntityHandle& OutEntityTarget, bool& bOutHostileUnitTarget) const;
 	void ShowGroundCommandFeedback(const FVector& Location, bool bAttackGround);
 	void ClearMoveCommandFeedback();
 	TArray<FVector> BuildGroundConformingRing(

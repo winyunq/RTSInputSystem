@@ -125,6 +125,8 @@ protected:
 	TWeakObjectPtr<APlayerController> CommandPanelInputOwner;
 	FKey HeldCommandHotkey;
 	int32 HeldCommandSlotIndex = INDEX_NONE;
+	double LastCommandHotkeyRepeatTime = -1.0;
+	bool bHasRepeatedCommandHotkey = false;
 
     /** 当前正在显示的网格资产 (托管状态) */
     UPROPERTY()

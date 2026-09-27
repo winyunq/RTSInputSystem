@@ -2870,63 +2870,10 @@ void URTSSelectionSubsystem::IssueCommandWithLocation(
 	}
 }
 
-void URTSSelectionSubsystem::IssueCommandWithTarget(FGameplayTag CommandTag, AActor* TargetActor)
+void URTSSelectionSubsystem::IssueCommandWithTarget(FGameplayTag CommandTag, const FEntityHandle& TargetEntity)
 {
-    UE_LOG(LogTemp, Log, TEXT("RTSSelectionSubsystem: Command %s Issued with TargetActor %s"), *CommandTag.ToString(), TargetActor ? *TargetActor->GetName() : TEXT("NULL"));
-	const bool bHadSelection = !SelectedEntities.IsEmpty() || !SelectedActors.IsEmpty();
-
-    if (SelectedEntities.Num() > 0)
-    {
-		bool bHandledByExternalMassSystem = false;
-		const bool bComposableCommand = IsComposableContextCommand(CommandTag);
-		const FRTSSelectionView View = BuildSelectionView();
-		{
-			TGuardValue<bool> ExposeAllSelectedGuard(
-				bExposeAllSelectedMassForComposableCommand,
-				bComposableCommand);
-			OnHandleMassTargetCommand().Broadcast(
-				this,
-				CommandTag,
-				TargetActor,
-				View,
-				bHandledByExternalMassSystem);
-		}
-
-        if (ULocalPlayer* LP = GetLocalPlayer())
-        {
-            if (!bHandledByExternalMassSystem || bComposableCommand)
-            {
-                if (URTSCommandSubsystem* SignalHub = LP->GetSubsystem<URTSCommandSubsystem>())
-                {
-                    SignalHub->IssueCommandWithTarget(CommandTag, TargetActor);
-                }
-            }
-        }
-    }
-
-	for (AActor* Actor : SelectedActors)
-	{
-		if (Actor && Actor->Implements<URTSCommandInterface>())
-		{
-			IRTSCommandInterface::Execute_ExecuteCommandWithTarget(Actor, CommandTag, TargetActor);
-			if (TargetActor && IsComposableContextCommand(CommandTag))
-			{
-				if (URTSSelectable* Selectable = Actor->FindComponentByClass<URTSSelectable>())
-				{
-					Selectable->SetCurrentTaskVisualization(CommandTag, TargetActor->GetActorLocation());
-				}
-			}
-		}
-	}
-
-	if (bHadSelection && TargetActor)
-	{
-		OnCommandFeedbackIssued.Broadcast(
-			CommandTag,
-			TargetActor->GetActorLocation(),
-			true,
-			false);
-	}
+    IssueCommandWithEntityTarget(CommandTag, TargetEntity);
+                
 }
 
 FString URTSSelectionSubsystem::GetActiveGroupKey() const
@@ -3008,4 +2955,40 @@ AActor* URTSSelectionSubsystem::GetActiveActor() const
         }
     }
     return SelectedActors[0];
+}
+
+void URTSSelectionSubsystem::IssueCommandWithEntityTarget(FGameplayTag CommandTag, const FEntityHandle& TargetEntity)
+{
+	if (SelectedEntities.IsEmpty() || !UMassAPIFuncLib::IsValid(this, TargetEntity))
+	{
+		return;
+	}
+
+	const bool bComposableCommand = IsComposableContextCommand(CommandTag);
+	const FRTSSelectionView View = BuildSelectionView();
+	 bool bHandledByExternalMassSystem = false;
+	    {
+	        TGuardValue<bool> ExposeAllSelectedGuard(
+	            bExposeAllSelectedMassForComposableCommand, bComposableCommand);
+	        OnHandleMassTargetCommand().Broadcast(
+	            this, CommandTag, TargetEntity, View, bHandledByExternalMassSystem);
+	    }
+	    if (!bHandledByExternalMassSystem || bComposableCommand)
+	    {
+	        if (ULocalPlayer* LocalPlayer = GetLocalPlayer())
+	        {
+	            if (URTSCommandSubsystem* SignalHub = LocalPlayer->GetSubsystem<URTSCommandSubsystem>())
+	            {
+	                SignalHub->IssueCommandWithEntityTarget(CommandTag, TargetEntity);
+	            }
+	        }
+	    } FVector TargetLocation = FVector::ZeroVector;
+	FVector PreviousLocation = FVector::ZeroVector;
+	FVector InitialLocation = FVector::ZeroVector;
+	UMassBattleFuncLib::GetAgentLocation(
+		this, TargetEntity, TargetLocation, PreviousLocation, InitialLocation);
+
+	
+
+	OnCommandFeedbackIssued.Broadcast(CommandTag, TargetLocation, true, false);
 }

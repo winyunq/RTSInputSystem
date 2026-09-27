@@ -105,17 +105,9 @@ void URTSCommandSubsystem::IssueCommandWithLocation(
 			: ERTSMoveNavigationScale::Auto);
 }
 
-void URTSCommandSubsystem::IssueCommandWithTarget(FGameplayTag Tag, AActor* TargetActor)
+void URTSCommandSubsystem::IssueCommandWithTarget(FGameplayTag Tag, const FEntityHandle& TargetEntity)
 {
-	FEntityHandle Target;
-	if (TargetActor)
-	{
-		if (const auto* Component = TargetActor->FindComponentByClass<UMassBattleAgentComponent>())
-		{
-			Target = Component->GetEntityHandle();
-		}
-	}
-	ExecuteCommand(Tag, GetSelectedMassEntities(), nullptr, Target, false);
+	IssueCommandWithEntityTarget(Tag, TargetEntity);
 }
 
 TArray<FEntityHandle> URTSCommandSubsystem::GetSelectedMassEntities() const
@@ -851,4 +843,9 @@ bool URTSCommandSubsystem::IssueAttackTarget(UObject* WorldContext,
 		return true;
 	}
 	return false;
+}
+
+void URTSCommandSubsystem::IssueCommandWithEntityTarget(FGameplayTag Tag, const FEntityHandle& TargetEntity)
+{
+	ExecuteCommand(Tag, GetSelectedMassEntities(), nullptr, TargetEntity, false);
 }

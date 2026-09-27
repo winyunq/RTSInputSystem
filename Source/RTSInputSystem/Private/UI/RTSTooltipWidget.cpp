@@ -152,7 +152,15 @@ void URTSTooltipWidget::UpdateTooltip(URTSCommandButton* Data, AActor* Executor,
 void URTSTooltipWidget::SetTooltipContent(const FText& InTitle, const FRTSCommandState& InState, UTexture2D* InIcon)
 {
 	if (HotkeyText) HotkeyText->SetVisibility(ESlateVisibility::Collapsed);
-    if (TitleText)
+		const auto NormalizeRichText = [](const FText& Text)
+		{
+			FString Value = Text.ToString();
+			Value.ReplaceInline(TEXT("<n/>"), TEXT("\n"));
+			Value.ReplaceInline(TEXT("<br>"), TEXT("\n"));
+			Value.ReplaceInline(TEXT("<br/>"), TEXT("\n"));
+			return FText::FromString(Value);
+		};
+	    if (TitleText)
     {
         TitleText->SetText(InTitle);
         TitleText->SetVisibility(InTitle.IsEmpty() ? ESlateVisibility::Collapsed : ESlateVisibility::HitTestInvisible);
@@ -160,7 +168,7 @@ void URTSTooltipWidget::SetTooltipContent(const FText& InTitle, const FRTSComman
 
     if (DescriptionText)
     {
-        DescriptionText->SetText(InState.Description);
+        DescriptionText->SetText(NormalizeRichText(InState.Description));
         DescriptionText->SetVisibility(InState.Description.IsEmpty() ? ESlateVisibility::Collapsed : ESlateVisibility::HitTestInvisible);
     }
 
@@ -176,7 +184,7 @@ void URTSTooltipWidget::SetTooltipContent(const FText& InTitle, const FRTSComman
 	if (DurationRow) DurationRow->SetVisibility(InState.DurationSeconds > 0.0f ? ESlateVisibility::HitTestInvisible : ESlateVisibility::Collapsed);
 	if (RequirementsText)
 	{
-		RequirementsText->SetText(InState.RequirementDescription);
+		RequirementsText->SetText(NormalizeRichText(InState.RequirementDescription));
 		RequirementsText->SetVisibility(InState.RequirementDescription.IsEmpty() ? ESlateVisibility::Collapsed : ESlateVisibility::HitTestInvisible);
 	}
 	if (StatusText)

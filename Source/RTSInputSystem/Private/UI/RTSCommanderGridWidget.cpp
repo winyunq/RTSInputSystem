@@ -532,11 +532,15 @@ void URTSCommanderGridWidget::InitGridSlots()
 void URTSCommanderGridWidget::UpdateSlotHotkey(int32 SlotIndex)
 {
 	URTSCommandButtonWidget* Button = GridButtons[SlotIndex];
-	const FKey Key = Button ? GetEffectiveCommandPanelKey(Button->GetData(), SlotIndex) : FKey();
-	UTextBlock* Label = GridHotkeyLabels[SlotIndex];
-	Label->SetText(Key.IsValid() ? Key.GetDisplayName() : FText::GetEmpty());
-	Label->SetVisibility(Key.IsValid() && AreCommandPanelHotkeysEnabled()
-		? ESlateVisibility::HitTestInvisible : ESlateVisibility::Collapsed);
+		const FKey Key = Button ? GetEffectiveCommandPanelKey(Button->GetData(), SlotIndex) : FKey();
+		const URTSInputPanelSettings* Settings = GetDefault<URTSInputPanelSettings>();
+		const bool bHotkeysEnabled = !Settings || Settings->GetPlayerSettingNumber(
+			TEXT("GetCommandPanelHotkeysEnabled"),
+			Settings->bEnableCommandPanelHotkeys ? 1.0 : 0.0) > 0.5;
+		UTextBlock* Label = GridHotkeyLabels[SlotIndex];
+		Label->SetText(Key.IsValid() ? Key.GetDisplayName() : FText::GetEmpty());
+		Label->SetVisibility(Key.IsValid() && bHotkeysEnabled
+			? ESlateVisibility::HitTestInvisible : ESlateVisibility::Collapsed);
 }
 
 void URTSCommanderGridWidget::OnSelectionUpdated(const FRTSSelectionView& View)
@@ -985,36 +989,27 @@ void URTSCommanderGridWidget::NotifyButtonUnhovered(URTSCommandButtonWidget* Btn
 
 void URTSCommanderGridWidget::RegisterCommandPanelHotkeys()
 {
-	if (!AreCommandPanelHotkeysEnabled())
-	{
-		return;
-	}
-
 	APlayerController* PC = GetOwningPlayer();
-	if (!PC || CommandPanelInputComponent)
-	{
-		return;
-	}
-
-	UWorld* InputWorld = PC->GetWorld();
-	if (!InputWorld)
-	{
-		return;
-	}
-
-	CommandPanelInputComponent = NewObject<UInputComponent>(PC);
-	if (!CommandPanelInputComponent)
-	{
-		return;
-	}
-
-	CommandPanelInputComponent->Priority = 5;
-	CommandPanelInputComponent->bBlockInput = false;
-	CommandPanelInputComponent->RegisterComponentWithWorld(InputWorld);
-
-	PC->PushInputComponent(CommandPanelInputComponent);
-	CommandPanelInputOwner = PC;
-	RebuildCommandPanelHotkeys();
+		if (!PC || CommandPanelInputComponent)
+		{
+			return;
+		}
+		UWorld* InputWorld = PC->GetWorld();
+		if (!InputWorld)
+		{
+			return;
+		}
+		CommandPanelInputComponent = NewObject<UInputComponent>(PC);
+		if (!CommandPanelInputComponent)
+		{
+			return;
+		}
+		CommandPanelInputComponent->Priority = 5;
+		CommandPanelInputComponent->bBlockInput = false;
+		CommandPanelInputComponent->RegisterComponentWithWorld(InputWorld);
+		PC->PushInputComponent(CommandPanelInputComponent);
+		CommandPanelInputOwner = PC;
+		RebuildCommandPanelHotkeys();
 }
 
 void URTSCommanderGridWidget::RebuildCommandPanelHotkeys()
@@ -1030,6 +1025,10 @@ void URTSCommanderGridWidget::RebuildCommandPanelHotkeys()
 	ClearHeldCommandHotkeyState();
 	CommandPanelInputComponent->KeyBindings.Reset();
 	TSet<FKey> BoundKeys;
+		const URTSInputPanelSettings* PlayerSettings = GetDefault<URTSInputPanelSettings>();
+		const bool bConsumeCommandHotkeys = !PlayerSettings || PlayerSettings->GetPlayerSettingNumber(
+			TEXT("GetCommandPanelHotkeysEnabled"),
+			PlayerSettings->bEnableCommandPanelHotkeys ? 1.0 : 0.0) > 0.5;
 
 	for (int32 SlotIndex = 0; SlotIndex < GridButtons.Num(); ++SlotIndex)
 	{
@@ -1048,7 +1047,7 @@ void URTSCommanderGridWidget::RebuildCommandPanelHotkeys()
 		BoundKeys.Add(Hotkey);
 
 		FInputKeyBinding PressedBinding(FInputChord(Hotkey), IE_Pressed);
-		PressedBinding.bConsumeInput = true;
+		PressedBinding.bConsumeInput = bConsumeCommandHotkeys;
 		PressedBinding.KeyDelegate.GetDelegateForManualSet().BindLambda(
 			[WeakThis = TWeakObjectPtr<URTSCommanderGridWidget>(this), SlotIndex, Hotkey]()
 		{
@@ -1060,7 +1059,7 @@ void URTSCommanderGridWidget::RebuildCommandPanelHotkeys()
 		CommandPanelInputComponent->KeyBindings.Add(MoveTemp(PressedBinding));
 
 		FInputKeyBinding RepeatBinding(FInputChord(Hotkey), IE_Repeat);
-		RepeatBinding.bConsumeInput = true;
+		RepeatBinding.bConsumeInput = bConsumeCommandHotkeys;
 		RepeatBinding.KeyDelegate.GetDelegateForManualSet().BindLambda(
 			[WeakThis = TWeakObjectPtr<URTSCommanderGridWidget>(this), SlotIndex, Hotkey]()
 		{
@@ -1072,7 +1071,7 @@ void URTSCommanderGridWidget::RebuildCommandPanelHotkeys()
 		CommandPanelInputComponent->KeyBindings.Add(MoveTemp(RepeatBinding));
 
 		FInputKeyBinding ReleasedBinding(FInputChord(Hotkey), IE_Released);
-		ReleasedBinding.bConsumeInput = true;
+		ReleasedBinding.bConsumeInput = bConsumeCommandHotkeys;
 		ReleasedBinding.KeyDelegate.GetDelegateForManualSet().BindLambda(
 			[WeakThis = TWeakObjectPtr<URTSCommanderGridWidget>(this), Hotkey]()
 		{
@@ -1153,11 +1152,18 @@ void URTSCommanderGridWidget::ConfirmPendingTargetWithHotkey(
 
 void URTSCommanderGridWidget::HandleCommandPanelHotkeyPressed(int32 SlotIndex, const FKey& Hotkey)
 {
-	ClearHeldCommandHotkeyState();
-
-	URTSCommandButtonWidget* ButtonWidget = GridButtons.IsValidIndex(SlotIndex)
-		? GridButtons[SlotIndex]
-		: nullptr;
+	const URTSInputPanelSettings* PlayerSettings = GetDefault<URTSInputPanelSettings>();
+		if (PlayerSettings && PlayerSettings->GetPlayerSettingNumber(
+			TEXT("GetCommandPanelHotkeysEnabled"),
+			PlayerSettings->bEnableCommandPanelHotkeys ? 1.0 : 0.0) <= 0.5)
+		{
+			return;
+		}
+		ClearHeldCommandHotkeyState();
+	
+		URTSCommandButtonWidget* ButtonWidget = GridButtons.IsValidIndex(SlotIndex)
+			? GridButtons[SlotIndex]
+			: nullptr;
 	URTSCommandButton* ButtonData = ButtonWidget ? ButtonWidget->GetData() : nullptr;
 	if (!ButtonWidget
 		|| ButtonWidget->GetVisibility() != ESlateVisibility::Visible
@@ -1167,8 +1173,9 @@ void URTSCommanderGridWidget::HandleCommandPanelHotkeyPressed(int32 SlotIndex, c
 	}
 
 	HeldCommandHotkey = Hotkey;
-	HeldCommandSlotIndex = SlotIndex;
-	ButtonWidget->SetKeyboardPressed(true);
+		HeldCommandSlotIndex = SlotIndex;
+		LastCommandHotkeyRepeatTime = GetWorld() ? GetWorld()->GetRealTimeSeconds() : 0.0;
+		ButtonWidget->SetKeyboardPressed(true);
 
 	bool bConfirmedPendingTarget = false;
 	if (APlayerController* PC = GetOwningPlayer())
@@ -1195,32 +1202,56 @@ void URTSCommanderGridWidget::HandleCommandPanelHotkeyRepeated(
 	const FKey& Hotkey)
 {
 	if (HeldCommandHotkey != Hotkey || HeldCommandSlotIndex != SlotIndex)
-	{
-		return;
-	}
-
-	APlayerController* PC = CommandPanelInputOwner.Get();
-	URTSCommandButtonWidget* ButtonWidget = GridButtons.IsValidIndex(SlotIndex)
-		? GridButtons[SlotIndex]
-		: nullptr;
-	URTSCommandButton* ButtonData = ButtonWidget ? ButtonWidget->GetData() : nullptr;
-	URTSSelector* Selector = PC ? PC->FindComponentByClass<URTSSelector>() : nullptr;
-	const bool bQueueModifierDown = FSlateApplication::IsInitialized()
-		&& FSlateApplication::Get().GetModifierKeys().IsShiftDown();
-	if (!PC
-		|| !bQueueModifierDown
-		|| !ButtonWidget
-		|| ButtonWidget->GetVisibility() != ESlateVisibility::Visible
-		|| !ButtonData
-		|| GetEffectiveCommandPanelKey(ButtonData, SlotIndex) != Hotkey
-		|| !Selector
-		|| !Selector->bIsTargeting
-		|| !Selector->PendingCommandTag.MatchesTagExact(ButtonData->CommandTag))
-	{
-		return;
-	}
-
-	ConfirmPendingTargetWithHotkey(Selector, Hotkey, true);
+		{
+			return;
+		}
+		const URTSInputPanelSettings* Settings = GetDefault<URTSInputPanelSettings>();
+		if (Settings && Settings->GetPlayerSettingNumber(
+			TEXT("GetCommandPanelHotkeysEnabled"),
+			Settings->bEnableCommandPanelHotkeys ? 1.0 : 0.0) <= 0.5)
+		{
+			return;
+		}
+		APlayerController* PC = CommandPanelInputOwner.Get();
+		URTSCommandButtonWidget* ButtonWidget = GridButtons.IsValidIndex(SlotIndex)
+			? GridButtons[SlotIndex]
+			: nullptr;
+		URTSCommandButton* ButtonData = ButtonWidget ? ButtonWidget->GetData() : nullptr;
+		URTSSelector* Selector = PC ? PC->FindComponentByClass<URTSSelector>() : nullptr;
+		const bool bQueueModifierDown = FSlateApplication::IsInitialized()
+			&& FSlateApplication::Get().GetModifierKeys().IsShiftDown();
+		if (!PC
+			|| !bQueueModifierDown
+			|| !ButtonWidget
+			|| ButtonWidget->GetVisibility() != ESlateVisibility::Visible
+			|| !ButtonData
+			|| GetEffectiveCommandPanelKey(ButtonData, SlotIndex) != Hotkey
+			|| !Selector
+			|| !Selector->bIsTargeting
+			|| !Selector->PendingCommandTag.MatchesTagExact(ButtonData->CommandTag))
+		{
+			return;
+		}
+		UWorld* World = GetWorld();
+		if (!World)
+		{
+			return;
+		}
+		const double CurrentTime = World->GetRealTimeSeconds();
+		const double RepeatDelay = Settings ? Settings->GetPlayerSettingNumber(
+			TEXT("GetCommandPanelHotkeyRepeatDelayIndex"),
+			Settings->CommandPanelHotkeyRepeatDelay) : 0.333333;
+		const double RepeatInterval = Settings ? Settings->GetPlayerSettingNumber(
+			TEXT("GetCommandPanelHotkeyRepeatIntervalIndex"),
+			Settings->CommandPanelHotkeyRepeatInterval) : 0.041667;
+		const double MinimumRepeatInterval = bHasRepeatedCommandHotkey ? RepeatInterval : RepeatDelay;
+		if (CurrentTime - LastCommandHotkeyRepeatTime < MinimumRepeatInterval)
+		{
+			return;
+		}
+		ConfirmPendingTargetWithHotkey(Selector, Hotkey, true);
+		LastCommandHotkeyRepeatTime = CurrentTime;
+		bHasRepeatedCommandHotkey = true;
 }
 
 void URTSCommanderGridWidget::HandleCommandPanelHotkeyReleased(const FKey& Hotkey)
@@ -1247,7 +1278,9 @@ void URTSCommanderGridWidget::ClearHeldCommandHotkeyState()
 		}
 	}
 	HeldCommandHotkey = FKey();
-	HeldCommandSlotIndex = INDEX_NONE;
+		HeldCommandSlotIndex = INDEX_NONE;
+		LastCommandHotkeyRepeatTime = -1.0;
+		bHasRepeatedCommandHotkey = false;
 }
 
 void URTSCommanderGridWidget::ExecuteCommandPanelSlot(int32 SlotIndex)

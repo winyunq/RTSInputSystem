@@ -249,12 +249,15 @@ FText FRTSCommandRequirementEvaluator::FormatUseRequirements(
 			Label = FText::Format(NSLOCTEXT("RTSRequirements", "CountCondition", "{0}：需要 {1}，当前 {2}"),
 				Label, FText::AsNumber(Node.MinimumCount), Current);
 		}
-		const FText Status = !Result.bKnown
-			? NSLOCTEXT("RTSRequirements", "Unknown", "状态不可用")
-			: Result.bSatisfied ? NSLOCTEXT("RTSRequirements", "Satisfied", "已满足")
-				: NSLOCTEXT("RTSRequirements", "Unsatisfied", "未满足");
-		Lines.Add(FString::ChrN(Depth * 2, TEXT(' '))
-			+ FText::Format(NSLOCTEXT("RTSRequirements", "Line", "{0}（{1}）"), Label, Status).ToString());
+		const bool bGroup = Node.Operator == ERTSRequirementOperator::All
+			|| Node.Operator == ERTSRequirementOperator::Any
+			|| Node.Operator == ERTSRequirementOperator::Not;
+		if (!bGroup)
+		{
+			const TCHAR* Color = Result.bKnown && Result.bSatisfied
+				? TEXT("RichText.Green") : TEXT("RichText.Red");
+			Lines.Add(FString::Printf(TEXT("<%s>- %s</>"), Color, *Label.ToString()));
+		}
 		for (const int32 Child : Node.Children) Self(Self, Child, Depth + 1);
 	};
 	FormatNode(FormatNode, Requirements.UseRoot, 0);

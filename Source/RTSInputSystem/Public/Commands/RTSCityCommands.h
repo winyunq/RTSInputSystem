@@ -514,7 +514,7 @@ public:
 	URTSCmd_TransferCity()
 	{
 		CommandTag = FGameplayTag::RequestGameplayTag(FName("RTS.Command.City.Transfer"), false);
-		TargetType = ERTSCommandTargetType::LocationOrTarget;
+		TargetType = ERTSCommandTargetType::TargetActor;
 		DisplayName = FText::FromString(TEXT("转让城市"));
 		Description = FText::FromString(TEXT("点击队友的单位或城市，将当前城市及其建筑转让给该队友。"));
 		PreferredIndex = 4;

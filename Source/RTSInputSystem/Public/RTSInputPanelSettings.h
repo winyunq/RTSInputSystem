@@ -146,6 +146,8 @@ struct FRTSMassUnitTypeProtocol
 	 */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "RTS Mass Unit Protocol")
 	FString UnitAssetPath;
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "RTS Mass Unit Protocol")
+	TSoftObjectPtr<URTSCommandButton> ProductionCommand;
 
 	/** Stable type key used by UI grouping and future protocols. */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "RTS Mass Unit Protocol")
@@ -512,6 +514,8 @@ public:
 	/** Hard cap on queued destination ranges; never scales with selected-unit count. */
 	UPROPERTY(Config, EditAnywhere, BlueprintReadOnly, Category = "RTS Command Feedback", meta = (ClampMin = "1", ClampMax = "32"))
 	int32 MaxSelectedTaskRouteLines = 32;
+
+	double GetPlayerSettingNumber(const FName GetterFunctionName, const double DefaultValue) const;
 };
 
 /**

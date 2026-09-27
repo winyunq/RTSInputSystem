@@ -35,7 +35,7 @@ DECLARE_MULTICAST_DELEGATE_FourParams(
 DECLARE_MULTICAST_DELEGATE_FourParams(FRTSExternalMassCommandGridResolver, UObject* /*WorldContextObject*/, const FString& /*ActiveKey*/, const FRTSSelectionView& /*SelectionView*/, class URTSCommandGridAsset*& /*OutGrid*/);
 DECLARE_MULTICAST_DELEGATE_FourParams(FRTSExternalMassInstantCommandHandler, UObject* /*WorldContextObject*/, const FGameplayTag& /*CommandTag*/, const FRTSSelectionView& /*SelectionView*/, bool& /*bHandled*/);
 DECLARE_MULTICAST_DELEGATE_FiveParams(FRTSExternalMassLocationCommandHandler, UObject* /*WorldContextObject*/, const FGameplayTag& /*CommandTag*/, const FVector& /*Location*/, const FRTSSelectionView& /*SelectionView*/, bool& /*bHandled*/);
-DECLARE_MULTICAST_DELEGATE_FiveParams(FRTSExternalMassTargetCommandHandler, UObject* /*WorldContextObject*/, const FGameplayTag& /*CommandTag*/, AActor* /*TargetActor*/, const FRTSSelectionView& /*SelectionView*/, bool& /*bHandled*/);
+DECLARE_MULTICAST_DELEGATE_FiveParams(FRTSExternalMassTargetCommandHandler, UObject* /*WorldContextObject*/, const FGameplayTag& /*CommandTag*/, const FEntityHandle& /*TargetEntity*/, const FRTSSelectionView& /*SelectionView*/, bool& /*bHandled*/);
 DECLARE_MULTICAST_DELEGATE_ThreeParams(FRTSExternalMassUnitDataEnricher, UObject* /*WorldContextObject*/, const FEntityHandle& /*Entity*/, FRTSUnitData& /*Data*/);
 DECLARE_MULTICAST_DELEGATE_FiveParams(
 	FRTSExternalQuickSelectionResolver,
@@ -215,7 +215,7 @@ public:
      * Issues a command targeting a specific actor to all selected units.
      */
     UFUNCTION(BlueprintCallable, Category = "RTS Selection")
-    void IssueCommandWithTarget(FGameplayTag CommandTag, AActor* TargetActor);
+    void IssueCommandWithTarget(FGameplayTag CommandTag, const FEntityHandle& TargetEntity);
 
 	UFUNCTION(BlueprintCallable, Category = "RTS Selection")
 	bool HasSelectedActors() const { return SelectedActors.Num() > 0; }
@@ -295,6 +295,8 @@ public:
 	UTexture2D* GetMassSubtypeUnitPanelIcon(int32 SubTypeIndex) const;
 	UTexture2D* GetMassSubtypeUnitAvatar(int32 SubTypeIndex) const;
 
+
+	void IssueCommandWithEntityTarget(FGameplayTag CommandTag, const FEntityHandle& TargetEntity);
 private:
 	// Raw State
 	UPROPERTY()
