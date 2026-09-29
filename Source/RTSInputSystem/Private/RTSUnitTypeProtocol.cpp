@@ -6,6 +6,7 @@
 #include "Interfaces/IPluginManager.h"
 #include "Misc/ConfigCacheIni.h"
 #include "Misc/Paths.h"
+#include "Engine/World.h"
 
 #if WITH_DEV_AUTOMATION_TESTS
 #include "Misc/AutomationTest.h"
@@ -549,16 +550,14 @@ bool FRTSTankAssetIdentityProtocolTest::RunTest(const FString& Parameters)
 	{
 		return false;
 	}
-
-	const FName TankKey(TEXT("/Game/Unit/Actor/Army/Tank/France/MCPGenerated/France_Renault_FT17_MG/France_Renault_FT17_MG.France_Renault_FT17_MG"));
+	const FName TankKey(TEXT("/Game/Unit/Actor/Army/Tank/Common/Gen_Common_Tank_TwinMachineGun_Handpainted/Common_Tank_TwinMachineGun_Handpainted.Common_Tank_TwinMachineGun_Handpainted"));
 	const FRTSMassUnitTypeProtocol* Tank =
 		RTSUnitTypeProtocol::FindByNetworkKeyOrSubType(Settings, TankKey, 52);
 	if (TestNotNull(TEXT("Exact tank asset identity resolves a protocol"), Tank))
 	{
 		TestEqual(TEXT("Subtype collision resolves to the tank protocol"),
-			Tank->TypeKey, FString(TEXT("Mass.France.Armor.Tank.RenaultFT17MG")));
+			Tank->TypeKey, FString(TEXT("Mass.Common.Armor.Common_Tank_TwinMachineGun_Handpainted")));
 	}
-
 	const FRTSMassUnitTypeProtocol* Legacy =
 		RTSUnitTypeProtocol::FindByNetworkKeyOrSubType(Settings, NAME_None, 52);
 	if (TestNotNull(TEXT("Legacy subtype fallback remains available"), Legacy))
@@ -566,7 +565,6 @@ bool FRTSTankAssetIdentityProtocolTest::RunTest(const FString& Parameters)
 		TestEqual(TEXT("Legacy subtype 52 remains the research center"),
 			Legacy->TypeKey, FString(TEXT("Mass.Structure.ResearchCenter")));
 	}
-
 	TSet<FString> TankPaths;
 	for (const FRTSMassUnitTypeProtocol& Protocol : Settings->MassUnitTypeProtocols)
 	{
@@ -577,7 +575,88 @@ bool FRTSTankAssetIdentityProtocolTest::RunTest(const FString& Parameters)
 			TankPaths.Add(Protocol.UnitAssetPath);
 		}
 	}
-	TestEqual(TEXT("All active tank slots have exact identity protocols"), TankPaths.Num(), 45);
+	TestEqual(TEXT("All active tank slots have exact identity protocols"), TankPaths.Num(), 164);
 	return true;
 }
 #endif
+
+namespace RTSUnitTypeProtocol
+{
+FSoftObjectPath ResolveCountryTankConfig(const UObject* WorldContext, int32 TeamIndex, const FSoftObjectPath& GenericConfig)
+{
+	const URTSInputPanelSettings* Settings = GetSettings();
+	const FRTSMassUnitTypeProtocol* Generic = FindByNetworkKeyOrSubType(Settings, FName(*GenericConfig.ToString()), INDEX_NONE);
+	if (!Generic || Generic->SubTypeIndex < 3801 || Generic->SubTypeIndex > 3814 || Generic->UnitAssetPath != GenericConfig.ToString())
+	{
+		return GenericConfig;
+	}
+	const UWorld* World = WorldContext ? WorldContext->GetWorld() : nullptr;
+	if (!World) return GenericConfig;
+	const FString Theater = World->URL.GetOption(TEXT("Theater="), TEXT(""));
+	const FString MapPackage = World->GetOutermost()->GetName();
+	const bool bEurope = Theater == TEXT("Europe") || (Theater.IsEmpty() && MapPackage.Contains(TEXT("/Map/Europe/")));
+	const bool bEastAsia = Theater == TEXT("EastAsia") || (Theater.IsEmpty() && MapPackage.Contains(TEXT("/Map/EastAsia/")));
+	int32 CountryRow = INDEX_NONE;
+	if (bEurope)
+	{
+		switch (TeamIndex)
+		{
+		case 1: CountryRow = 0; break;
+		case 8: CountryRow = 1; break;
+		case 15: CountryRow = 2; break;
+		case 2: CountryRow = 3; break;
+		case 3: CountryRow = 5; break;
+		case 4: CountryRow = 6; break;
+		case 6: CountryRow = 8; break;
+		case 7: CountryRow = 9; break;
+		case 13: CountryRow = 10; break;
+		case 16: CountryRow = 11; break;
+		case 17: CountryRow = 12; break;
+		case 26: CountryRow = 13; break;
+		case 27: CountryRow = 14; break;
+		default: return GenericConfig;
+		}
+	}
+	else if (bEastAsia)
+	{
+		switch (TeamIndex)
+		{
+		case 1:
+		case 2:
+		case 4:
+		case 5: CountryRow = 4; break;
+		case 3: CountryRow = 7; break;
+		default: return GenericConfig;
+		}
+	}
+	else
+	{
+		return GenericConfig;
+	}
+	static constexpr int32 Variants[15][14] = {
+		{4233, 4224, 4230, 4221, INDEX_NONE, 4227, 4209, 4212, 4206, 4217, 4203, 4240, 4243, 4236},
+		{4234, 4225, 4231, 4222, 4215, 4228, 4210, 4213, 4207, 4218, 4204, 4241, 4244, 4238},
+		{4235, 4226, 4232, 4223, 4216, 4229, 4211, 4214, 4208, 4219, 4205, 4242, 4245, 4239},
+		{4314, 4315, 4316, 4317, 4318, 4319, 4320, 4321, 4322, 4323, 4324, 4325, 4326, 4327},
+		{4300, 4301, 4302, 4303, 4304, 4305, 4306, 4307, 4308, 4309, 4310, 4311, 4312, 4313},
+		{4330, 4332, 4333, 4334, 4335, 4331, 4336, 4337, 4338, 4339, 4340, 4341, 4342, 4343},
+		{4367, 4369, 4370, 4371, INDEX_NONE, 4368, INDEX_NONE, INDEX_NONE, INDEX_NONE, INDEX_NONE, 4373, 4374, 4375, INDEX_NONE},
+		{4349, 4351, 4352, 4353, 4354, 4350, 4355, 4356, 4357, 4358, 4359, 4360, 4361, 4362},
+		{INDEX_NONE, INDEX_NONE, INDEX_NONE, INDEX_NONE, INDEX_NONE, INDEX_NONE, INDEX_NONE, INDEX_NONE, INDEX_NONE, INDEX_NONE, 4397, INDEX_NONE, INDEX_NONE, INDEX_NONE},
+		{4381, 4384, INDEX_NONE, INDEX_NONE, INDEX_NONE, INDEX_NONE, INDEX_NONE, INDEX_NONE, INDEX_NONE, INDEX_NONE, INDEX_NONE, 4382, INDEX_NONE, INDEX_NONE},
+		{INDEX_NONE, 4386, 4387, INDEX_NONE, INDEX_NONE, INDEX_NONE, INDEX_NONE, INDEX_NONE, INDEX_NONE, INDEX_NONE, 4388, INDEX_NONE, INDEX_NONE, INDEX_NONE},
+		{INDEX_NONE, 4407, 4408, INDEX_NONE, INDEX_NONE, INDEX_NONE, INDEX_NONE, INDEX_NONE, INDEX_NONE, INDEX_NONE, INDEX_NONE, INDEX_NONE, INDEX_NONE, INDEX_NONE},
+		{INDEX_NONE, INDEX_NONE, INDEX_NONE, INDEX_NONE, INDEX_NONE, INDEX_NONE, INDEX_NONE, INDEX_NONE, INDEX_NONE, INDEX_NONE, INDEX_NONE, 4406, INDEX_NONE, INDEX_NONE},
+		{INDEX_NONE, INDEX_NONE, INDEX_NONE, INDEX_NONE, INDEX_NONE, INDEX_NONE, INDEX_NONE, INDEX_NONE, INDEX_NONE, INDEX_NONE, INDEX_NONE, 4394, 4395, INDEX_NONE},
+		{INDEX_NONE, 4389, 4390, 4391, INDEX_NONE, INDEX_NONE, INDEX_NONE, INDEX_NONE, INDEX_NONE, INDEX_NONE, 4392, INDEX_NONE, INDEX_NONE, INDEX_NONE}
+	};
+	const int32 VariantSubType = Variants[CountryRow][Generic->SubTypeIndex - 3801];
+	const FRTSMassUnitTypeProtocol* Variant = VariantSubType != INDEX_NONE ? FindBySubType(Settings, VariantSubType) : nullptr;
+	if (!Variant || Variant->TypeKey != Generic->TypeKey || Variant->ProductionCommand != Generic->ProductionCommand
+		|| !Variant->UnitAssetPath.StartsWith(TEXT("/Game/Unit/Actor/Army/Tank/")))
+	{
+		return GenericConfig;
+	}
+	return FSoftObjectPath(Variant->UnitAssetPath);
+}
+}

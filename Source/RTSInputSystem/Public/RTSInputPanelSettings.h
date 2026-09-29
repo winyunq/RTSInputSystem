@@ -545,3 +545,9 @@ namespace RTSUnitTypeProtocol
 		const FRTSMassUnitTypeProtocol& Protocol,
 		const FGameplayTag& CommandTag);
 }
+
+namespace RTSUnitTypeProtocol
+{
+	RTSINPUTSYSTEM_API FSoftObjectPath ResolveCountryTankConfig(
+		const UObject* WorldContext, int32 TeamIndex, const FSoftObjectPath& GenericConfig);
+}

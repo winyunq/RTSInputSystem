@@ -26,3 +26,7 @@
 *.log
 *.bak
 *.codex-bak-*
+
+# CODEX_SOURCE_ONLY_DEFAULT
+# New files are backed up only by the explicit GIT_BACKUP.md file list.
+*
