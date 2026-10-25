@@ -10,7 +10,7 @@
 #include "Commands/RTSCommandRequirements.h"
 #include "RTSCommandButton.generated.h"
 
-class UStaticMesh;
+class UMassBattleAgentConfigDataAsset;
 
 UENUM(BlueprintType)
 enum class ERTSCommandTargetType : uint8
@@ -114,9 +114,9 @@ public:
     UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Logic")
     TArray<FGameplayTag> Requirements;
 
-	/** Optional authored building mesh shown at the cursor while placing this command. */
+	/** Final building configuration used for the placement preview. */
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Placement")
-	TSoftObjectPtr<UStaticMesh> PlacementPreviewMesh;
+	TSoftObjectPtr<UMassBattleAgentConfigDataAsset> PlacementPreviewUnit;
 
     /**
      * Executes the logic associated with this button.

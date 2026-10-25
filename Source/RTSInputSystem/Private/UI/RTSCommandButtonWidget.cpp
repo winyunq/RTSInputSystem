@@ -17,6 +17,7 @@
 #include "RTSSelectionSubsystem.h"
 #include "Engine/LocalPlayer.h"
 #include "GameFramework/PlayerController.h"
+#include "RTSSelector.h"
 
 namespace
 {
@@ -458,7 +459,6 @@ FText URTSCommandButtonWidget::GetTooltipDescription() const
 void URTSCommandButtonWidget::RefreshCommandState()
 {
 	if (bProgressItemMode || !ButtonData) return;
-
 	if (DisplayNameText)
 	{
 		const FText Name = ButtonData->GetDisplayNameForContext(this, GetOwningPlayer());
@@ -466,13 +466,11 @@ void URTSCommandButtonWidget::RefreshCommandState()
 		DisplayNameText->SetVisibility(!IsValid(ButtonData->Icon) && !Name.IsEmpty()
 			? ESlateVisibility::HitTestInvisible : ESlateVisibility::Collapsed);
 	}
-
 	CommandState = ResolveCommandState();
 	const FRTSCommandState& State = CommandState;
 	SetVisibility(!State.bVisible || (!State.bAvailable && ButtonData->bHideIfUnavailable)
 		? ESlateVisibility::Hidden : ESlateVisibility::Visible);
-	SetIsDisabled(!ButtonData->bIsResearch && !State.bAvailable);
-
+	SetIsDisabled(!State.bAvailable);
 	UObject* CommandContext = ButtonData->CommandContext.Get();
 	const bool bHasCommandContext = CommandContext && CommandContext->Implements<URTSCommandInterface>();
 	if (!bHasCommandContext && ContextActor.IsValid() && ContextActor->Implements<URTSCommandInterface>())
@@ -497,7 +495,6 @@ void URTSCommandButtonWidget::RefreshCommandState()
 			CooldownMaterial->SetScalarParameterValue(FName("CD_EndTime"), Phase);
 		}
 		bIsCooldownActive = bCurrentlyCooling;
-
 		if (ButtonData->bAllowAutoCast && AutoCastBorder)
 		{
 			const bool bEnabled = IRTSCommandInterface::Execute_IsAutoCastEnabled(ContextActor.Get(), ButtonData->CommandTag);
@@ -509,7 +506,6 @@ void URTSCommandButtonWidget::RefreshCommandState()
 		const bool bEnabled = ButtonData->IsAutoCastEnabledForContext(this, GetOwningPlayer());
 		AutoCastBorder->SetVisibility(bEnabled ? ESlateVisibility::HitTestInvisible : ESlateVisibility::Hidden);
 	}
-
 	if (QueueCountText)
 	{
 		const int32 QueueCount = ButtonData->GetQueueCountForContext(this, ContextActor.Get());
@@ -547,6 +543,10 @@ void URTSCommandButtonWidget::SetIsDisabled(bool bDisabled)
 	if (MainButton)
 	{
 		MainButton->SetIsEnabled(!bDisabled);
+	}
+	if (IconImage)
+	{
+		IconImage->SetIsEnabled(!bDisabled);
 	}
 }
 
@@ -613,7 +613,37 @@ void URTSCommandButtonWidget::HandleClicked()
 	if (ButtonData)
 	{
         UE_LOG(LogTemp, Verbose, TEXT("RTSCommandButtonWidget: Clicked %s"), *ButtonData->CommandTag.ToString());
-		OnCommandClicked.Broadcast(ButtonData->CommandTag);
+		if (APlayerController* Controller = GetOwningPlayer())
+				{
+					if (URTSSelector* Selector = Controller->FindComponentByClass<URTSSelector>())
+					{
+						if (Selector->BeginCommandTargeting(ButtonData))
+						
+							return;
+						
+					}
+				}
+				const FGameplayTag TrainTag = FGameplayTag::RequestGameplayTag(TEXT("RTS.Command.Train"), false);
+				if (ButtonData->CommandTag.MatchesTag(TrainTag))
+				{
+					APlayerController* Controller = GetOwningPlayer();
+					UFunction* Submit = Controller ? Controller->FindFunction(TEXT("SendLockstepCommandToServer")) : nullptr;
+					if (!Submit || BoundProgressSources.IsEmpty()) return;
+					struct FProductionInput
+					{
+						FName CommandTag = TEXT("RTS.Production.EnqueueOrder");
+						TArray<FName> NamePayload;
+						TArray<int32> IntPayload;
+						TArray<float> FloatPayload;
+						int32 ExtraDeferTicks = 0;
+					} Input;
+					Input.NamePayload.Add(ButtonData->CommandTag.GetTagName());
+					Algo::Transform(BoundProgressSources, Input.NamePayload,
+						[](const auto& Source) { return Source.Value; });
+					Controller->ProcessEvent(Submit, &Input);
+					return;
+				}
+				OnCommandClicked.Broadcast(ButtonData->CommandTag);
 	}
 }
 

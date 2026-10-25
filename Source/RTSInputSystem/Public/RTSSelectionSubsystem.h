@@ -297,6 +297,8 @@ public:
 
 
 	void IssueCommandWithEntityTarget(FGameplayTag CommandTag, const FEntityHandle& TargetEntity);
+
+	FRTSSelectionView GetSelectionView();
 private:
 	// Raw State
 	UPROPERTY()

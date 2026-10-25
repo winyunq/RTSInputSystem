@@ -34,6 +34,7 @@
 #include "GameFramework/PlayerController.h"
 #include "Kismet/GameplayStatics.h"
 #include "Widgets/Layout/SBox.h"
+#include "RTSSelector.h"
 
 namespace
 {
@@ -512,7 +513,7 @@ void URTSUnitPanelWidget::NativeDestruct()
 
 	if (APlayerController* PC = GetOwningPlayer())
 	{
-		if (ULocalPlayer* LP = PC->GetLocalPlayer())
+		 if (ULocalPlayer* LP = PC->GetLocalPlayer())
 		{
 			if (URTSSelectionSubsystem* Subsystem = LP->GetSubsystem<URTSSelectionSubsystem>())
 			{
@@ -535,7 +536,7 @@ void URTSUnitPanelWidget::NativeDestruct()
 
 void URTSUnitPanelWidget::OnSelectionUpdated(const FRTSSelectionView& View)
 {
-	RefreshGrid(View);
+	 RefreshGrid(View);
 }
 
 void URTSUnitPanelWidget::OnCommandProgressChanged(UObject* ProgressProvider, FName SourceId, FGuid ResolvedId, bool bCancelled)
@@ -1032,4 +1033,9 @@ UWidget* URTSUnitPanelWidget::FindDescendantWidgetByName(UWidget* RootWidget, FN
 	}
 
 	return nullptr;
+}
+
+void URTSUnitPanelWidget::OnCommandTargetingChanged(FGameplayTag CommandTag)
+{
+	(void)CommandTag;
 }

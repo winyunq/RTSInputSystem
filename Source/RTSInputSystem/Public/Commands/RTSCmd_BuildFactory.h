@@ -40,8 +40,8 @@ public:
 		bAllowAutoCast = false;
 		LowValueCost = 75;
 		PlacementFootprintCells = FIntPoint(1, 1);
-		PlacementPreviewMesh = TSoftObjectPtr<UStaticMesh>(FSoftObjectPath(TEXT(
-			"/Game/Unit/Actor/Building/Economics/Factory/Common_IndustrialFactory_Workshop/SM_Common_IndustrialFactory_Workshop.SM_Common_IndustrialFactory_Workshop")));
+		PlacementPreviewUnit = TSoftObjectPtr<UMassBattleAgentConfigDataAsset>(FSoftObjectPath(TEXT(
+			"/Game/Unit/Actor/Building/Economics/Factory/Common_IndustrialFactory_Workshop/Common_IndustrialFactory_Workshop.Common_IndustrialFactory_Workshop")));
 	}
 };
 

@@ -32,6 +32,9 @@ public:
 	virtual void NativeDestruct() override;
 	virtual void NativeTick(const FGeometry& MyGeometry, float InDeltaTime) override;
 
+
+	UFUNCTION()
+	void OnCommandTargetingChanged(FGameplayTag CommandTag);
 protected:
 	virtual TSharedRef<SWidget> RebuildWidget() override;
 	virtual void ReleaseSlateResources(bool bReleaseChildren) override;
@@ -96,6 +99,8 @@ protected:
 	// Three overlaid routes share one fixed content area.
 	UPROPERTY(meta = (BindWidgetOptional))
 	UWidget* SingleUnitPanel;
+	UPROPERTY(Transient)
+	TObjectPtr<UUserWidget> TargetingDetailWidget;
 
 	// Research and weapons/armor share the right half of the single-unit body.
 	UPROPERTY(meta = (BindWidgetOptional))

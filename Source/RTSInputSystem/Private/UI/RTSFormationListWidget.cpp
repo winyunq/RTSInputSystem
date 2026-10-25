@@ -104,7 +104,13 @@ void URTSFormationListWidget::BuildSlotPool()
 		return;
 	}
 
-	FormationSlotContainer->ClearChildren();
+	UClass* SharedButtonClass = LoadClass<UUserWidget>(nullptr,
+			TEXT("/Game/UI/HeadUpDisplay/ControlGird/CommandButton.CommandButton_C"));
+		const UWidgetTree* SharedButtonTree = SharedButtonClass
+			? FindObject<UWidgetTree>(SharedButtonClass, TEXT("WidgetTree")) : nullptr;
+		const UButton* SharedButton = SharedButtonTree
+			? Cast<UButton>(SharedButtonTree->FindWidget(TEXT("MainButton"))) : nullptr;
+		FormationSlotContainer->ClearChildren();
 	ControlGroupButtons.SetNumZeroed(10);
 	ControlGroupGrid = WidgetTree->ConstructWidget<UHorizontalBox>(
 		UHorizontalBox::StaticClass(),
@@ -117,7 +123,7 @@ void URTSFormationListWidget::BuildSlotPool()
 	FormationSlotContainer->AddChild(ControlGroupGrid);
 	if (UHorizontalBoxSlot* GridHostSlot = Cast<UHorizontalBoxSlot>(ControlGroupGrid->Slot))
 	{
-		GridHostSlot->SetHorizontalAlignment(HAlign_Left);
+		GridHostSlot->SetHorizontalAlignment(HAlign_Center);
 		GridHostSlot->SetVerticalAlignment(VAlign_Center);
 		GridHostSlot->SetPadding(FormationEdgePadding);
 	}
@@ -145,6 +151,10 @@ void URTSFormationListWidget::BuildSlotPool()
 			continue;
 		}
 		Button->ControlGroupIndex = GroupIndex;
+				if (SharedButton)
+				{
+					Button->SetStyle(SharedButton->GetStyle());
+				}
 
 		UHorizontalBox* CardRow = WidgetTree->ConstructWidget<UHorizontalBox>(
 			UHorizontalBox::StaticClass(),

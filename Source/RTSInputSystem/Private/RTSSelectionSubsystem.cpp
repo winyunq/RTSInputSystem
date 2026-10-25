@@ -38,6 +38,8 @@
 #include "ImageUtils.h"
 #include "Misc/Paths.h"
 #include "Algo/AllOf.h"
+#include "Engine/ObjectLibrary.h"
+#include "UObject/StrongObjectPtr.h"
 
 DEFINE_LOG_CATEGORY(LogORTSSelection);
 
@@ -482,25 +484,11 @@ namespace
 			IconCache.Remove(IconIndex);
 		}
 
-		const FString IconPath = FPaths::Combine(
-			FPaths::ProjectPluginsDir(),
-			TEXT("RTSInputSystem"),
-			TEXT("Content"),
-			TEXT("Portraits"),
-			TEXT("Source"),
-			DefaultIconFiles[IconIndex]
-		);
-
-		UTexture2D* Texture = nullptr;
-		if (IFileManager::Get().FileExists(*IconPath))
-		{
-			Texture = FImageUtils::ImportFileAsTexture2D(IconPath);
-			if (Texture)
-			{
-				Texture->AddToRoot();
-				Texture->SRGB = true;
-			}
-		}
+		const FString RelativePath = FPaths::ChangeExtension(DefaultIconFiles[IconIndex], TEXT(""));
+		const FString AssetName = FPaths::GetBaseFilename(RelativePath);
+		const FString AssetPath = FString::Printf(
+			TEXT("/RTSInputSystem/Portraits/%s.%s"), *RelativePath, *AssetName);
+		UTexture2D* Texture = FindObject<UTexture2D>(nullptr, *AssetPath);
 
 		// A temporarily missing source file must not poison the entire editor
 		// session. Cache successful imports only so a later selection can retry.
@@ -513,33 +501,8 @@ namespace
 
 	UTexture2D* LoadDefaultUnitAvatar()
 	{
-		static UTexture2D* CachedAvatar = nullptr;
-
-		if (IsValid(CachedAvatar))
-		{
-			return CachedAvatar;
-		}
-
-		const FString AvatarPath = FPaths::Combine(
-			FPaths::ProjectPluginsDir(),
-			TEXT("RTSInputSystem"),
-			TEXT("Content"),
-			TEXT("Portraits"),
-			TEXT("Source"),
-			TEXT("RTS_UnitAvatar_Placeholder_256x512.png")
-		);
-
-		if (IFileManager::Get().FileExists(*AvatarPath))
-		{
-			CachedAvatar = FImageUtils::ImportFileAsTexture2D(AvatarPath);
-			if (CachedAvatar)
-			{
-				CachedAvatar->AddToRoot();
-				CachedAvatar->SRGB = true;
-			}
-		}
-
-		return CachedAvatar;
+		return FindObject<UTexture2D>(nullptr,
+			TEXT("/RTSInputSystem/Portraits/RTS_UnitAvatar_Placeholder_256x512.RTS_UnitAvatar_Placeholder_256x512"));
 	}
 
 	UTexture2D* LoadDefaultUnitAvatarBySeed(uint32 Seed)
@@ -994,7 +957,12 @@ namespace
 
 void URTSSelectionSubsystem::Initialize(FSubsystemCollectionBase& Collection)
 {
-	Super::Initialize(Collection);
+	Super::Initialize(Collection );
+	
+		static TStrongObjectPtr<UObjectLibrary> UIAssets(
+			UObjectLibrary::CreateLibrary(UTexture2D::StaticClass(), false, false));
+		UIAssets->LoadAssetsFromPaths({
+			TEXT("/RTSInputSystem/CommandIcons"), TEXT("/RTSInputSystem/Portraits")} );
 
     // C++ Auto-Config Grid (Transient)
     // If no grid is provided, use the built-in MassBattle unit grid.
@@ -2719,9 +2687,17 @@ FRTSUnitData URTSSelectionSubsystem::CreateUnitDataFromEntity(const FEntityHandl
 					const FName UnitAssetKey = !RuntimeUnitAssetPath.IsEmpty()
 						? FName(*RuntimeUnitAssetPath)
 						: NAME_None;
-					Data.Icon = GetMassSubtypeUnitPanelIcon(SubTypeIndex);
-					Data.Portrait = GetMassUnitPortrait(UnitAssetKey, SubTypeIndex);
+					
+					
 					ApplyMassProtocolToUnitData(Data, Protocol, SubTypeIndex);
+					if (!Data.Icon)
+					{
+						Data.Icon = GetMassSubtypeUnitPanelIcon(SubTypeIndex);
+					}
+					if (!Data.Portrait)
+					{
+						Data.Portrait = GetMassUnitPortrait(UnitAssetKey, SubTypeIndex);
+					}
 					Data.UnitAssetPath = RuntimeUnitAssetPath;
 					Data.SelectionTags = BuildSelectionTags(
 						Data.TypeKey,
@@ -2959,7 +2935,7 @@ AActor* URTSSelectionSubsystem::GetActiveActor() const
 
 void URTSSelectionSubsystem::IssueCommandWithEntityTarget(FGameplayTag CommandTag, const FEntityHandle& TargetEntity)
 {
-	if (SelectedEntities.IsEmpty() || !UMassAPIFuncLib::IsValid(this, TargetEntity))
+	if (!UMassAPIFuncLib::IsValid(this, TargetEntity))
 	{
 		return;
 	}
@@ -2991,4 +2967,9 @@ void URTSSelectionSubsystem::IssueCommandWithEntityTarget(FGameplayTag CommandTa
 	
 
 	OnCommandFeedbackIssued.Broadcast(CommandTag, TargetLocation, true, false);
+}
+
+FRTSSelectionView URTSSelectionSubsystem::GetSelectionView()
+{
+	return BuildSelectionView();
 }

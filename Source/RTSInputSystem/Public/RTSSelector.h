@@ -17,7 +17,7 @@ class AActor;
 class FRTSSelectorInputProcessor;
 class IInputProcessor;
 class ULocalPlayer;
-class UStaticMesh;
+class UMassBattleAgentConfigDataAsset;
 class URTSSelectable;
 class UWidget;
 
@@ -84,6 +84,9 @@ public:
 	// --- Targeting State (for Targeted Commands like Move/Attack) ---
 	UPROPERTY(BlueprintReadWrite, Category = "RTSCamera - Selection")
 	bool bIsTargeting = false;
+	UPROPERTY(Transient)
+	TObjectPtr<URTSCommandButton> TargetingCommandDefinition;
+	FOnRTSHashGridSelectionCancelled OnTargetingChanged;
 
 	UPROPERTY(BlueprintReadWrite, Category = "RTSCamera - Selection")
 	FGameplayTag PendingCommandTag;
@@ -147,12 +150,12 @@ public:
 	UFUNCTION(BlueprintCallable, Category = "RTSCamera - Hash Grid Selection")
 	void BeginHashGridSelectionWithFootprint(FGameplayTag CommandTag, FVector2D FootprintCells, float CellSize);
 
-	/** C++ placement entry that also supplies the authored building ghost mesh. */
+	/** C++ placement entry using the final building configuration. */
 	void BeginHashGridSelectionWithFootprintAndPreview(
 		FGameplayTag CommandTag,
 		FVector2D FootprintCells,
 		float CellSize,
-		UStaticMesh* PreviewMesh);
+		UMassBattleAgentConfigDataAsset* PreviewUnit);
 
 	UFUNCTION(BlueprintCallable, Category = "RTSCamera - Hash Grid Selection")
 	void CancelHashGridSelection();
@@ -161,6 +164,8 @@ public:
 	bool IsHashGridSelectionActive() const { return bIsHashGridSelecting; }
 
 
+
+	bool BeginCommandTargeting(URTSCommandButton* Command);
 protected:
 	virtual void BeginPlay() override;
 	virtual void EndPlay(const EEndPlayReason::Type EndPlayReason) override;
@@ -306,7 +311,7 @@ private:
 		FGameplayTag CommandTag,
 		FVector2D FootprintCells,
 		float CellSize,
-		UStaticMesh* PreviewMesh);
+		UMassBattleAgentConfigDataAsset* PreviewUnit);
 	void UpdateHashGridSelectionPreview();
 	void UpdateBuildPlacementGuidance(const FRTSHashGridSelectionResult& Result);
 	void ClearBuildPlacementGuidance(bool bResetSamples);

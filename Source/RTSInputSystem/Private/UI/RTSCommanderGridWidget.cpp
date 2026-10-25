@@ -12,7 +12,7 @@
 #include "Blueprint/WidgetLayoutLibrary.h"
 #include "Blueprint/WidgetTree.h"
 #include "Engine/Texture2D.h"
-#include "Engine/StaticMesh.h"
+#include "DataAssets/MassBattleAgentConfigDataAsset.h"
 #include "Engine/Engine.h"
 #include "Engine/GameViewportClient.h"
 #include "Framework/Application/SlateApplication.h"
@@ -293,49 +293,12 @@ namespace
 
 	UTexture2D* LoadDefaultCommandIcon(const FGameplayTag& CommandTag)
 	{
-		static TMap<FName, UTexture2D*> IconCache;
-
 		const TCHAR* IconFileName = GetDefaultCommandIconFileName(CommandTag);
-		if (!IconFileName)
-		{
-			return nullptr;
-		}
-
-		const FName CacheKey(IconFileName);
-		if (UTexture2D** CachedTexture = IconCache.Find(CacheKey))
-		{
-			if (IsValid(*CachedTexture))
-			{
-				return *CachedTexture;
-			}
-			IconCache.Remove(CacheKey);
-		}
-
-		const FString IconPath = FPaths::Combine(
-			FPaths::ProjectPluginsDir(),
-			TEXT("RTSInputSystem"),
-			TEXT("Content"),
-			TEXT("CommandIcons"),
-			TEXT("Source"),
-			IconFileName
-		);
-
-		UTexture2D* Texture = nullptr;
-		if (IFileManager::Get().FileExists(*IconPath))
-		{
-			Texture = FImageUtils::ImportFileAsTexture2D(IconPath);
-			if (Texture)
-			{
-				Texture->AddToRoot();
-				Texture->SRGB = true;
-			}
-		}
-
-		if (Texture)
-		{
-			IconCache.Add(CacheKey, Texture);
-		}
-		return Texture;
+		if (!IconFileName) return nullptr;
+		const FString AssetName = FPaths::GetBaseFilename(IconFileName);
+		const FString AssetPath = FString::Printf(
+			TEXT("/RTSInputSystem/CommandIcons/%s.%s"), *AssetName, *AssetName);
+		return FindObject<UTexture2D>(nullptr, *AssetPath);
 	}
 
 	FText MakeCommandLabelFromTag(const FGameplayTag& CommandTag)
@@ -902,22 +865,7 @@ void URTSCommanderGridWidget::OnGridButtonClicked(const FGameplayTag& CommandTag
                 {
                     if (URTSSelector* Selector = PC->FindComponentByClass<URTSSelector>())
                     {
-						if (ClickedData->PlacementFootprintCells.X > 0
-							&& ClickedData->PlacementFootprintCells.Y > 0)
-						{
-							const URTSInputPanelSettings* Settings = GetDefault<URTSInputPanelSettings>();
-							const float CellSize = Settings ? Settings->HashGridCellSize : 16.0f;
-							Selector->BeginHashGridSelectionWithFootprintAndPreview(
-								CommandTag,
-								FVector2D(ClickedData->PlacementFootprintCells),
-								CellSize,
-								ClickedData->PlacementPreviewMesh.LoadSynchronous());
-						}
-						else
-						{
-							Selector->BeginTargetingWithType(CommandTag, ClickedData->TargetType);
-						}
-						UpdateCommandStateVisuals();
+						Selector->BeginCommandTargeting(ClickedData);
                         return;
                     }
                 }
@@ -1024,6 +972,17 @@ void URTSCommanderGridWidget::RebuildCommandPanelHotkeys()
 
 	ClearHeldCommandHotkeyState();
 	CommandPanelInputComponent->KeyBindings.Reset();
+	FInputKeyBinding TabBinding(FInputChord(EKeys::Tab), IE_Pressed);
+	TabBinding.bConsumeInput = true;
+	TabBinding.KeyDelegate.GetDelegateForManualSet().BindLambda(
+		[WeakThis = TWeakObjectPtr<URTSCommanderGridWidget>(this)]()
+	{
+		if (URTSCommanderGridWidget* Widget = WeakThis.Get())
+			if (ULocalPlayer* LocalPlayer = Widget->GetOwningLocalPlayer())
+				if (URTSSelectionSubsystem* Selection = LocalPlayer->GetSubsystem<URTSSelectionSubsystem>())
+					Selection->CycleGroup();
+	});
+	CommandPanelInputComponent->KeyBindings.Add(MoveTemp(TabBinding));
 	TSet<FKey> BoundKeys;
 		const URTSInputPanelSettings* PlayerSettings = GetDefault<URTSInputPanelSettings>();
 		const bool bConsumeCommandHotkeys = !PlayerSettings || PlayerSettings->GetPlayerSettingNumber(
@@ -1286,23 +1245,17 @@ void URTSCommanderGridWidget::ClearHeldCommandHotkeyState()
 void URTSCommanderGridWidget::ExecuteCommandPanelSlot(int32 SlotIndex)
 {
 	if (!GridButtons.IsValidIndex(SlotIndex))
-	{
+	
 		return;
-	}
+	
 
 	URTSCommandButtonWidget* ButtonWidget = GridButtons[SlotIndex];
-	if (!ButtonWidget || ButtonWidget->GetVisibility() != ESlateVisibility::Visible)
-	{
+	if (!ButtonWidget ||  ! ButtonWidget->IsVisible() )
+	
 		return;
-	}
+	
 
-	URTSCommandButton* ButtonData = ButtonWidget->GetData();
-	if (!ButtonData)
-	{
-		return;
-	}
-
-	OnGridButtonClicked(ButtonData->CommandTag);
+	ButtonWidget->HandleClicked();
 }
 
 void URTSCommanderGridWidget::UpdateCommandStateVisuals()
@@ -1342,6 +1295,35 @@ void URTSCommanderGridWidget::UpdateCommandStateVisuals()
 			ButtonData
 			&& ActiveCommandTag.IsValid()
 			&& ButtonData->CommandTag.MatchesTagExact(ActiveCommandTag));
+	}
+	APlayerController* Controller = GetOwningPlayer();
+	URTSSelector* Selector = Controller ? Controller->FindComponentByClass<URTSSelector>() : nullptr;
+	URTSCommandButton* TargetingCommand = Selector && Selector->bIsTargeting
+		? Selector->TargetingCommandDefinition.Get() : nullptr;
+	if (TargetingCommand)
+	{
+		HoveredTooltipButton.Reset();
+		if (!SharedTooltip) NotifyButtonHovered(nullptr, TargetingCommand);
+		if (!SharedTooltip) return;
+		FRTSCommandState State = TargetingCommand->GetCommandStateForContext(this, Controller);
+		State.Description = FText::Format(NSLOCTEXT("RTSInput", "TargetingDetailDescription",
+			"{0}\n\n左键选择目标施放，右键或 Esc 取消。"), State.Description);
+		SharedTooltip->SetTooltipContent(
+			TargetingCommand->GetDisplayNameForContext(this, Controller), State, TargetingCommand->Icon);
+		CommandGridPanel->SetVisibility(ESlateVisibility::Hidden);
+		SharedTooltip->SetClipping(EWidgetClipping::ClipToBounds);
+		SharedTooltip->SetVisibility(ESlateVisibility::SelfHitTestInvisible);
+		PositionSharedTooltip();
+		return;
+	}
+	if (CommandGridPanel && CommandGridPanel->GetVisibility() == ESlateVisibility::Hidden)
+	{
+		CommandGridPanel->SetVisibility(ESlateVisibility::Visible);
+		if (SharedTooltip)
+		{
+			SharedTooltip->SetVisibility(ESlateVisibility::Collapsed);
+			SharedTooltip->SetClipping(EWidgetClipping::Inherit);
+		}
 	}
 	if (SharedTooltip && HoveredTooltipButton.IsValid())
 	{
@@ -1385,6 +1367,20 @@ void URTSCommanderGridWidget::PositionSharedTooltip()
 			AnchorViewportPosition);
 
 		const FVector2D AnchorSize = AnchorGeometry.GetLocalSize();
+		APlayerController* Controller = GetOwningPlayer();
+		URTSSelector* Selector = Controller ? Controller->FindComponentByClass<URTSSelector>() : nullptr;
+		if (Selector && Selector->bIsTargeting && Selector->TargetingCommandDefinition)
+		{
+			FVector2D EndPixelPosition;
+			FVector2D EndViewportPosition;
+			USlateBlueprintLibrary::AbsoluteToViewport(
+				this, AnchorGeometry.LocalToAbsolute(AnchorSize), EndPixelPosition, EndViewportPosition);
+			const FVector2D CardSize = EndViewportPosition - AnchorViewportPosition;
+			SharedTooltip->SetContentWidth(CardSize.X);
+			SharedTooltip->SetDesiredSizeInViewport(CardSize);
+			SharedTooltip->SetPositionInViewport(AnchorViewportPosition, false);
+			return;
+		}
 		SharedTooltip->SetContentWidth(AnchorSize.X);
 		const FVector2D TooltipSize = GetTooltipDesiredSize(SharedTooltip, FVector2D(380.0f, 220.0f));
 		const FVector2D PanelTooltipSize(

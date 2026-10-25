@@ -266,8 +266,6 @@ const URTSInputPanelSettings* RTSUnitTypeProtocol::GetSettings()
 	if (!Settings->MassUnitTypeProtocols.IsEmpty()
 		|| !Settings->CommandLoadouts.IsEmpty())
 	{
-		ApplyBuiltInBuilderDefenseLayout(Settings);
-		ApplyBuiltInBuilderProductionLayout(Settings);
 		return Settings;
 	}
 

@@ -78,9 +78,9 @@ public:
 		DisplayName = FText::FromString(TEXT("碉堡"));
 		Description = FText::FromString(TEXT("选择位置建造碉堡。"));
 		PreferredIndex = 0;
-		PlacementFootprintCells = FIntPoint(2, 2);
-		PlacementPreviewMesh = TSoftObjectPtr<UStaticMesh>(FSoftObjectPath(TEXT(
-			"/Game/Unit/Actor/Building/Defence/WW2/Common/Gen_Common_GarrisonBunker_FourPorts_Handpainted/SM_Common_GarrisonBunker_FourPorts_Handpainted.SM_Common_GarrisonBunker_FourPorts_Handpainted")));
+		PlacementFootprintCells = FIntPoint(1, 1);
+		PlacementPreviewUnit = TSoftObjectPtr<UMassBattleAgentConfigDataAsset>(FSoftObjectPath(TEXT(
+			"/Game/Unit/Actor/Building/Defence/WW2/Common/Gen_Common_GarrisonBunker_FourPorts_Handpainted/Common_GarrisonBunker_FourPorts_Handpainted.Common_GarrisonBunker_FourPorts_Handpainted")));
 	}
 };
 
@@ -98,8 +98,8 @@ public:
 		Description = FText::FromString(TEXT("选择位置建造迫击炮碉堡。"));
 		PreferredIndex = 3;
 		PlacementFootprintCells = FIntPoint(2, 2);
-		PlacementPreviewMesh = TSoftObjectPtr<UStaticMesh>(FSoftObjectPath(TEXT(
-			"/Game/Unit/Actor/Building/Defence/WW2/Common/Gen_Common_MortarEmplacement_OpenPit_Handpainted/SM_Common_MortarEmplacement_OpenPit_Handpainted.SM_Common_MortarEmplacement_OpenPit_Handpainted")));
+		PlacementPreviewUnit = TSoftObjectPtr<UMassBattleAgentConfigDataAsset>(FSoftObjectPath(TEXT(
+			"/Game/Unit/Actor/Building/Defence/WW2/Common/Gen_Common_MortarEmplacement_OpenPit_Handpainted/Common_MortarEmplacement_OpenPit_Handpainted.Common_MortarEmplacement_OpenPit_Handpainted")));
 	}
 };
 
@@ -117,8 +117,8 @@ public:
 		Description = FText::FromString(TEXT("选择位置建造岸防炮。"));
 		PreferredIndex = 6;
 		PlacementFootprintCells = FIntPoint(2, 2);
-		PlacementPreviewMesh = TSoftObjectPtr<UStaticMesh>(FSoftObjectPath(TEXT(
-			"/Game/Unit/Actor/Building/Defence/WW2/Common/Gen_Common_CoastalBattery_HeavyGun_Handpainted/SM_Common_CoastalBattery_HeavyGun_Handpainted.SM_Common_CoastalBattery_HeavyGun_Handpainted")));
+		PlacementPreviewUnit = TSoftObjectPtr<UMassBattleAgentConfigDataAsset>(FSoftObjectPath(TEXT(
+			"/Game/Unit/Actor/Building/Defence/WW2/Common/Gen_Common_CoastalBattery_HeavyGun_Handpainted/Common_CoastalBattery_HeavyGun_Handpainted.Common_CoastalBattery_HeavyGun_Handpainted")));
 	}
 };
 
@@ -155,8 +155,8 @@ public:
 		PreferredIndex = 1;
 		DefaultCooldown = 0.0f;
 		PlacementFootprintCells = FIntPoint(2, 2);
-		PlacementPreviewMesh = TSoftObjectPtr<UStaticMesh>(FSoftObjectPath(TEXT(
-			"/Game/Unit/Actor/Building/Defence/Bunker/China/China_MachineGunBunker_DP28/China_MachineGunBunker_DP28.China_MachineGunBunker_DP28")));
+		PlacementPreviewUnit = TSoftObjectPtr<UMassBattleAgentConfigDataAsset>(FSoftObjectPath(TEXT(
+			"/Game/Unit/Actor/Building/Defence/WW2/Common/Gen_Common_MachineGunBunker_LightTurret_Handpainted/Common_MachineGunBunker_LightTurret_Handpainted.Common_MachineGunBunker_LightTurret_Handpainted")));
 	}
 };
 
@@ -174,9 +174,9 @@ public:
 		Description = FText::FromString(TEXT("在沙袋工事内部署两名炮手和一门57毫米反坦克炮；炮组整体作为炮塔追踪目标。优先由附近同队步兵施工。"));
 		PreferredIndex = 2;
 		DefaultCooldown = 0.0f;
-		PlacementFootprintCells = FIntPoint(2, 2);
-		PlacementPreviewMesh = TSoftObjectPtr<UStaticMesh>(FSoftObjectPath(TEXT(
-			"/Game/Unit/Actor/Building/Defence/Bunker/China/China_AntiTankBunker_ZiS2_57mm/China_AntiTankBunker_ZiS2_57mm.China_AntiTankBunker_ZiS2_57mm")));
+		PlacementFootprintCells = FIntPoint(3, 3);
+		PlacementPreviewUnit = TSoftObjectPtr<UMassBattleAgentConfigDataAsset>(FSoftObjectPath(TEXT(
+			"/Game/Unit/Actor/Building/Defence/WW2/Common/Gen_Common_AntiTankBunker_GunTurret_Handpainted/Common_AntiTankBunker_GunTurret_Handpainted.Common_AntiTankBunker_GunTurret_Handpainted")));
 	}
 };
 
@@ -197,8 +197,8 @@ public:
 		LowValueCost = 220;
 		HighValueCost = 40;
 		PlacementFootprintCells = FIntPoint(2, 2);
-		PlacementPreviewMesh = TSoftObjectPtr<UStaticMesh>(FSoftObjectPath(TEXT(
-			"/Game/Unit/Actor/Building/Defence/AntiAircraftEmplacement/Common_AntiAircraftEmplacement_TwinAutocannon/SM_Common_AntiAircraftEmplacement_TwinAutocannon.SM_Common_AntiAircraftEmplacement_TwinAutocannon")));
+		PlacementPreviewUnit = TSoftObjectPtr<UMassBattleAgentConfigDataAsset>(FSoftObjectPath(TEXT(
+			"/Game/Unit/Actor/Building/Defence/AntiAircraftEmplacement/Common_AntiAircraftEmplacement_TwinAutocannon/Common_AntiAircraftEmplacement_TwinAutocannon.Common_AntiAircraftEmplacement_TwinAutocannon")));
 	}
 };
 
@@ -262,8 +262,8 @@ public:
         LowValueCost = 150; // Minerals
         HighValueCost = 50; // Gas
 		PlacementFootprintCells = FIntPoint(1, 1);
-		PlacementPreviewMesh = TSoftObjectPtr<UStaticMesh>(FSoftObjectPath(TEXT(
-			"/Game/Unit/Actor/Building/Economics/University/Common_University_College/SM_Common_University_College.SM_Common_University_College")));
+		PlacementPreviewUnit = TSoftObjectPtr<UMassBattleAgentConfigDataAsset>(FSoftObjectPath(TEXT(
+			"/Game/Unit/Actor/Building/Economics/University/Common_University_College/Common_University_College.Common_University_College")));
 	}
 };
 
@@ -286,8 +286,8 @@ public:
         
 		LowValueCost = 150;
 		PlacementFootprintCells = FIntPoint(3, 3);
-		PlacementPreviewMesh = TSoftObjectPtr<UStaticMesh>(FSoftObjectPath(TEXT(
-			"/Game/Unit/Actor/Building/Production/Barracks/Common_Barracks_FieldCamp/SM_Common_Barracks_FieldCamp.SM_Common_Barracks_FieldCamp")));
+		PlacementPreviewUnit = TSoftObjectPtr<UMassBattleAgentConfigDataAsset>(FSoftObjectPath(TEXT(
+			"/Game/Unit/Actor/Building/Production/Barracks/Common_Barracks_FieldCamp/Common_Barracks_FieldCamp.Common_Barracks_FieldCamp")));
 	}
 };
 
@@ -307,8 +307,8 @@ public:
 		LowValueCost = 400;
 		HighValueCost = 100;
 		PlacementFootprintCells = FIntPoint(4, 4);
-		PlacementPreviewMesh = TSoftObjectPtr<UStaticMesh>(FSoftObjectPath(TEXT(
-			"/Game/Unit/Actor/Building/Production/TankFactory/SM_TankFactory.SM_TankFactory")));
+		PlacementPreviewUnit = TSoftObjectPtr<UMassBattleAgentConfigDataAsset>(FSoftObjectPath(TEXT(
+			"/Game/Unit/Actor/Building/Production/TankFactory/TankFactoryData.TankFactoryData")));
 	}
 };
 
@@ -328,8 +328,8 @@ public:
 		LowValueCost = 360;
 		HighValueCost = 80;
 		PlacementFootprintCells = FIntPoint(4, 4);
-		PlacementPreviewMesh = TSoftObjectPtr<UStaticMesh>(FSoftObjectPath(TEXT(
-			"/Game/Unit/Actor/Building/Production/VehicleFactory/Common_VehicleFactory_ArtilleryWorks/SM_Common_VehicleFactory_ArtilleryWorks.SM_Common_VehicleFactory_ArtilleryWorks")));
+		PlacementPreviewUnit = TSoftObjectPtr<UMassBattleAgentConfigDataAsset>(FSoftObjectPath(TEXT(
+			"/Game/Unit/Actor/Building/Production/VehicleFactory/Common_VehicleFactory_ArtilleryWorks.Common_VehicleFactory_ArtilleryWorks")));
 	}
 };
 
@@ -374,8 +374,8 @@ public:
 		LowValueCost = 0;
 		HighValueCost = 0;
 		PlacementFootprintCells = FIntPoint(6, 6);
-		PlacementPreviewMesh = TSoftObjectPtr<UStaticMesh>(FSoftObjectPath(TEXT(
-			"/Game/Unit/Actor/Building/Production/Airfield/Common_Airfield_RegionalAirport/SM_Common_Airfield_RegionalAirport.SM_Common_Airfield_RegionalAirport")));
+		PlacementPreviewUnit = TSoftObjectPtr<UMassBattleAgentConfigDataAsset>(FSoftObjectPath(TEXT(
+			"/Game/Unit/Actor/Building/Production/Airfield/Common_Airfield_RegionalAirport/Common_Airfield_RegionalAirport.Common_Airfield_RegionalAirport")));
 	}
 };
 
@@ -394,8 +394,8 @@ public:
 		PreferredIndex = 10;
 		DefaultCooldown = 0.0f;
 		PlacementFootprintCells = FIntPoint(8, 8);
-		PlacementPreviewMesh = TSoftObjectPtr<UStaticMesh>(FSoftObjectPath(TEXT(
-			"/Game/Unit/Actor/Building/Production/Shipyard/Common_Shipyard_CoastalDrydock/SM_Common_Shipyard_CoastalDrydock.SM_Common_Shipyard_CoastalDrydock")));
+		PlacementPreviewUnit = TSoftObjectPtr<UMassBattleAgentConfigDataAsset>(FSoftObjectPath(TEXT(
+			"/Game/Unit/Actor/Building/Production/Shipyard/Common_Shipyard_CoastalDrydock/Common_Shipyard_CoastalDrydock.Common_Shipyard_CoastalDrydock")));
 	}
 };
 
@@ -414,8 +414,8 @@ public:
 		PreferredIndex = 7;
 		DefaultCooldown = 0.0f;
 		PlacementFootprintCells = FIntPoint(2, 2);
-		PlacementPreviewMesh = TSoftObjectPtr<UStaticMesh>(FSoftObjectPath(TEXT(
-			"/Game/Unit/Actor/Building/Economics/ResearchCenter/Common_ResearchCenter_AppliedLaboratory/SM_Common_ResearchCenter_AppliedLaboratory.SM_Common_ResearchCenter_AppliedLaboratory")));
+		PlacementPreviewUnit = TSoftObjectPtr<UMassBattleAgentConfigDataAsset>(FSoftObjectPath(TEXT(
+			"/Game/Unit/Actor/Building/Economics/ResearchCenter/Common_ResearchCenter_AppliedLaboratory/Common_ResearchCenter_AppliedLaboratory.Common_ResearchCenter_AppliedLaboratory")));
 	}
 };
 
@@ -434,8 +434,8 @@ public:
 		PreferredIndex = 8;
 		DefaultCooldown = 0.0f;
 		PlacementFootprintCells = FIntPoint(2, 2);
-		PlacementPreviewMesh = TSoftObjectPtr<UStaticMesh>(FSoftObjectPath(TEXT(
-			"/Game/Unit/Actor/Building/Economics/IndustrialPark/Common_IndustrialPark_UtilityHub/SM_Common_IndustrialPark_UtilityHub.SM_Common_IndustrialPark_UtilityHub")));
+		PlacementPreviewUnit = TSoftObjectPtr<UMassBattleAgentConfigDataAsset>(FSoftObjectPath(TEXT(
+			"/Game/Unit/Actor/Building/Economics/IndustrialPark/Common_IndustrialPark_UtilityHub/Common_IndustrialPark_UtilityHub.Common_IndustrialPark_UtilityHub")));
 	}
 };
 
@@ -454,8 +454,8 @@ public:
 		PreferredIndex = 11;
 		DefaultCooldown = 0.0f;
 		PlacementFootprintCells = FIntPoint(3, 3);
-		PlacementPreviewMesh = TSoftObjectPtr<UStaticMesh>(FSoftObjectPath(TEXT(
-			"/Game/Unit/Actor/Building/Economics/Refinery/Common_Refinery_PetroleumWorks/SM_Common_Refinery_PetroleumWorks.SM_Common_Refinery_PetroleumWorks")));
+		PlacementPreviewUnit = TSoftObjectPtr<UMassBattleAgentConfigDataAsset>(FSoftObjectPath(TEXT(
+			"/Game/Unit/Actor/Building/Economics/Refinery/Common_Refinery_PetroleumWorks/Common_Refinery_PetroleumWorks.Common_Refinery_PetroleumWorks")));
 	}
 };
 
