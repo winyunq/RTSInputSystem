@@ -20,7 +20,7 @@
 #include "GameFramework/PlayerController.h"
 #include "NiagaraComponent.h"
 #include "NiagaraDataInterfaceArrayFunctionLibrary.h"
-#include "Renderers/MassBattleAgentRenderer.h"
+#include "Rendering/MassBattleAgentRenderer.h"
 #include "Styling/CoreStyle.h"
 #include "Widgets/Layout/SBorder.h"
 #include "Widgets/Layout/SBox.h"

@@ -2,6 +2,9 @@
 
 #include "RTSSelector.h"
 
+#include "DataAssets/MassBattleAgentConfigDataAsset.h"
+#include "Rendering/MassBattleAgentRenderer.h"
+#include "Components/SceneComponent.h"
 #include "EnhancedInputComponent.h"
 #include "EnhancedInputSubsystems.h"
 #include "Engine/GameViewportClient.h"
@@ -33,7 +36,7 @@
 #include "Framework/Application/SlateApplication.h"
 #include "Framework/Application/SlateUser.h"
 #include "Widgets/SViewport.h"
-#include "Renderers/MassBattleFxRenderer.h"
+#include "Rendering/MassBattleFxRenderer.h"
 #include "Materials/MaterialInstanceDynamic.h"
 #include "Materials/MaterialInterface.h"
 #include "ProceduralMeshComponent.h"
@@ -44,6 +47,12 @@
 #include "Widgets/SLeafWidget.h"
 #include "MassAPISubsystem.h"
 #include "Fragments/Team.h"
+
+#if WITH_DEV_AUTOMATION_TESTS
+#include "Commands/RTSCityCommands.h"
+#include "Misc/AutomationTest.h"
+#include "Misc/ScopeExit.h"
+#endif
 
 DECLARE_STATS_GROUP(TEXT("RTS Input Feedback"), STATGROUP_RTSInputFeedback, STATCAT_Advanced);
 DECLARE_CYCLE_STAT(
@@ -132,7 +141,12 @@ public:
 		if (URTSSelectionSubsystem* Selection = LocalPlayer->GetSubsystem<URTSSelectionSubsystem>())
 		{
 			// Selection owns Tab before Slate turns it into focus navigation. A held key stays consumed.
-			if (!KeyEvent.IsRepeat()) Selection->CycleGroup();
+			if (!KeyEvent.IsRepeat())
+			{
+				PC->InputKey(FInputKeyEventArgs(ViewportClient->Viewport,
+					KeyEvent.GetInputDeviceId(), EKeys::Tab, IE_Pressed,
+					1.0f, false, KeyEvent.GetEventTimestamp()));
+			}
 			return true;
 		}
 		return false;
@@ -488,14 +502,20 @@ namespace
 		Model->SetCastShadow(false);
 		Model->SetReceivesDecals(false);
 		Model->SetTranslucentSortPriority(140);
+		Model->SetupAttachment(PreviewActor->GetRootComponent());
 		Model->SetVisibility(false, true);
 		Model->SetHiddenInGame(false, true);
 		Model->RegisterComponentWithWorld(World);
 		return Model;
 	}
 
-	void ConfigureBuildPlacementModel(AActor* PreviewActor, UStaticMesh* PreviewMesh)
+	void ConfigureBuildPlacementModel(AActor* PreviewActor, UMassBattleAgentConfigDataAsset* PreviewUnit)
 	{
+		const TSubclassOf<AMassBattleAgentRenderer> RendererClass = PreviewUnit
+			? PreviewUnit->Visualize.RendererClass.LoadSynchronous() : nullptr;
+		const AMassBattleAgentRenderer* Renderer = RendererClass
+			? RendererClass->GetDefaultObject<AMassBattleAgentRenderer>() : nullptr;
+		UStaticMesh* PreviewMesh = Renderer ? Renderer->AgentMesh : nullptr;
 		if (!PreviewMesh)
 		{
 			if (URTSBuildPlacementWireframeComponent* Existing =
@@ -511,7 +531,10 @@ namespace
 			GetOrCreateBuildPlacementModel(PreviewActor))
 		{
 			Model->SetStaticMesh(PreviewMesh);
-			Model->SetWorldScale3D(FVector::OneVector);
+			FTransform PreviewTransform = Renderer->Offset;
+			PreviewTransform.SetTranslation(PreviewTransform.GetTranslation() * PreviewUnit->Scaling.Scale);
+			PreviewTransform.SetScale3D(PreviewTransform.GetScale3D() * PreviewUnit->Scaling.Scale);
+			Model->SetRelativeTransform(PreviewTransform);
 			Model->SetVisibility(true, true);
 		}
 	}
@@ -528,11 +551,7 @@ namespace
 			return;
 		}
 
-		// Keep the authored building distinct from both grid layers. A slight
-		// lift leaves the green/red ground footprint readable under the model.
-		Model->SetWorldLocationAndRotation(
-			Result.WorldLocation + FVector(0.0f, 0.0f, 2.5f),
-			FRotator::ZeroRotator);
+		PreviewActor->SetActorLocationAndRotation(Result.WorldLocation, FRotator::ZeroRotator);
 		const FLinearColor PreviewColor = Result.bIsValidPlacement
 			? (Settings
 				? Settings->BuildPlacementValidColor
@@ -1703,6 +1722,17 @@ void URTSSelector::CancelTargeting()
 	{
 		PlayerController->CurrentMouseCursor = EMouseCursor::Default;
 	}
+	if (TargetingCommandDefinition)
+	{
+		TargetingCommandDefinition = nullptr;
+		if (ULocalPlayer* LocalPlayer = PlayerController ? PlayerController->GetLocalPlayer() : nullptr)
+		{
+			if (URTSSelectionSubsystem* Selection = LocalPlayer->GetSubsystem<URTSSelectionSubsystem>())
+			{
+				Selection->RequestCommandRefresh();
+			}
+		}
+	}
 }
 
 bool URTSSelector::IsCommandQueueModifierDown() const
@@ -2491,13 +2521,13 @@ void URTSSelector::BeginHashGridSelectionWithFootprintAndPreview(
 	FGameplayTag CommandTag,
 	FVector2D FootprintCells,
 	float CellSize,
-	UStaticMesh* PreviewMesh)
+	UMassBattleAgentConfigDataAsset* PreviewUnit)
 {
 	BeginHashGridSelectionInternal(
 		CommandTag,
 		FootprintCells,
 		CellSize,
-		PreviewMesh);
+		PreviewUnit);
 }
 
 AActor* URTSSelector::GetBuildPlacementPreviewActor() const
@@ -2528,6 +2558,11 @@ AActor* URTSSelector::GetOrCreateBuildPlacementPreviewActor()
 		SpawnParameters);
 	if (AActor* PreviewActor = GetBuildPlacementPreviewActor())
 	{
+		USceneComponent* Root = NewObject<USceneComponent>(PreviewActor, TEXT("PlacementRoot"), RF_Transient);
+		PreviewActor->AddInstanceComponent(Root);
+		PreviewActor->SetRootComponent(Root);
+		Root->SetMobility(EComponentMobility::Movable);
+		Root->RegisterComponentWithWorld(World);
 		// Controllers are hidden actors in UE, so rendering primitives directly on
 		// the selector's owner makes an otherwise valid placement preview invisible.
 		PreviewActor->SetActorHiddenInGame(false);
@@ -2574,7 +2609,19 @@ void URTSSelector::CancelHashGridSelection()
 		PlayerController->CurrentMouseCursor = EMouseCursor::Default;
 	}
 
+	const bool bHadTargetingCommand = TargetingCommandDefinition != nullptr;
+	TargetingCommandDefinition = nullptr;
 	OnHashGridSelectionCancelled.Broadcast(CancelledCommandTag);
+	if (bHadTargetingCommand)
+	{
+		if (ULocalPlayer* LocalPlayer = PlayerController ? PlayerController->GetLocalPlayer() : nullptr)
+		{
+			if (URTSSelectionSubsystem* Selection = LocalPlayer->GetSubsystem<URTSSelectionSubsystem>())
+			{
+				Selection->RequestCommandRefresh();
+			}
+		}
+	}
 }
 
 bool URTSSelector::ShouldUseHashGridSelectionForCommand(FGameplayTag CommandTag) const
@@ -2825,7 +2872,7 @@ void URTSSelector::BeginHashGridSelectionInternal(
 	FGameplayTag CommandTag,
 	FVector2D FootprintCells,
 	float CellSize,
-	UStaticMesh* PreviewMesh)
+	UMassBattleAgentConfigDataAsset* PreviewUnit)
 {
 	ClearSelectableHoverPreview(false);
 	EndHashGridSelectionPreview();
@@ -2860,7 +2907,7 @@ void URTSSelector::BeginHashGridSelectionInternal(
 		UE_LOG(LogTemp, Warning, TEXT("RTSSelector: Could not create the visible build-placement preview host."));
 		return;
 	}
-	ConfigureBuildPlacementModel(PreviewActor, PreviewMesh);
+	ConfigureBuildPlacementModel(PreviewActor, PreviewUnit);
 
 	if (!HashGridSelectionDecalComponent)
 	{
@@ -3460,4 +3507,110 @@ void URTSSelector::CommitHashGridSelection()
 	{
 		PlayerController->CurrentMouseCursor = EMouseCursor::Default;
 	}
+	if (TargetingCommandDefinition)
+	{
+		TargetingCommandDefinition = nullptr;
+		if (ULocalPlayer* LocalPlayer = PlayerController ? PlayerController->GetLocalPlayer() : nullptr)
+		{
+			if (URTSSelectionSubsystem* Selection = LocalPlayer->GetSubsystem<URTSSelectionSubsystem>())
+			{
+				Selection->RequestCommandRefresh();
+			}
+		}
+	}
+}
+
+#if WITH_DEV_AUTOMATION_TESTS
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FRTSBuildingPlacementPreviewTest,
+	"Winyunq.Input.BuildingPlacementPreview",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+bool FRTSBuildingPlacementPreviewTest::RunTest(const FString& Parameters)
+{
+	UWorld* World = GWorld;
+	if (!TestNotNull(TEXT("Editor world is available"), World))
+		return false;
+	FActorSpawnParameters SpawnParameters;
+	SpawnParameters.ObjectFlags |= RF_Transient;
+	AActor* Host = World->SpawnActor<AActor>(AActor::StaticClass(), FTransform::Identity, SpawnParameters);
+	if (!TestNotNull(TEXT("Placement preview host"), Host))
+		return false;
+	ON_SCOPE_EXIT { Host->Destroy(); };
+	USceneComponent* Root = NewObject<USceneComponent>(Host);
+	Host->AddInstanceComponent(Root);
+	Host->SetRootComponent(Root);
+	Root->RegisterComponentWithWorld(World);
+
+	const URTSCommandButton* Buttons[] = {
+		GetDefault<URTSCmd_BuildGarrisonBunker>(),
+		GetDefault<URTSCmd_BuildMachineGunBunker>(),
+		GetDefault<URTSCmd_BuildAntiTankBunker>()
+	};
+	for (int32 Index = 0; Index < UE_ARRAY_COUNT(Buttons); ++Index)
+	{
+		const URTSCommandButton* Button = Buttons[Index];
+		const FString Label = Button->DisplayName.ToString();
+		TestEqual(*FString::Printf(TEXT("%s footprint"), *Label),
+			Button->PlacementFootprintCells, FIntPoint(Index + 1, Index + 1));
+		UMassBattleAgentConfigDataAsset* Unit = Button->PlacementPreviewUnit.LoadSynchronous();
+		if (!TestNotNull(*FString::Printf(TEXT("%s unit configuration"), *Label), Unit))
+			continue;
+		TestTrue(*FString::Printf(TEXT("%s physical width"), *Label),
+			FMath::IsNearlyEqual(2.0f * Unit->Collider.Radius * Unit->Scaling.Scale,
+				16.0f * (Index + 1), 0.01f));
+		const TSubclassOf<AMassBattleAgentRenderer> RendererClass = Unit->Visualize.RendererClass.LoadSynchronous();
+		if (!TestNotNull(*FString::Printf(TEXT("%s renderer"), *Label), RendererClass.Get()))
+			continue;
+		const AMassBattleAgentRenderer* Renderer = RendererClass->GetDefaultObject<AMassBattleAgentRenderer>();
+		ConfigureBuildPlacementModel(Host, Unit);
+		URTSBuildPlacementWireframeComponent* Model = FindBuildPlacementModel(Host);
+		if (!TestNotNull(*FString::Printf(TEXT("%s preview model"), *Label), Model))
+			continue;
+		TestTrue(*FString::Printf(TEXT("%s finished unit mesh"), *Label),
+			Model->GetStaticMesh() == Renderer->AgentMesh);
+		FTransform Expected = Renderer->Offset;
+		Expected.SetTranslation(Expected.GetTranslation() * Unit->Scaling.Scale);
+		Expected.SetScale3D(Expected.GetScale3D() * Unit->Scaling.Scale);
+		FRTSHashGridSelectionResult Result;
+		Result.WorldLocation = FVector(16.0, 32.0, 0.0);
+		Result.bIsValidPlacement = true;
+		UpdateBuildPlacementModel(Host, Result, nullptr);
+		TestTrue(*FString::Printf(TEXT("%s transform after cursor movement"), *Label),
+			Model->GetRelativeTransform().Equals(Expected));
+		TestTrue(*FString::Printf(TEXT("%s placement point with authored offset"), *Label),
+			Model->GetComponentLocation().Equals(Result.WorldLocation + Expected.GetTranslation()));
+	}
+	return !HasAnyErrors();
+}
+#endif
+
+bool URTSSelector::BeginCommandTargeting(URTSCommandButton* Command)
+{
+	if (!Command || (Command->TargetType != ERTSCommandTargetType::Location
+		&& Command->TargetType != ERTSCommandTargetType::LocationOrTarget
+		&& Command->TargetType != ERTSCommandTargetType::TargetActor))
+	{
+		return false;
+	}
+	if (Command->PlacementFootprintCells.X > 0 && Command->PlacementFootprintCells.Y > 0)
+	{
+		const URTSInputPanelSettings* Settings = GetDefault<URTSInputPanelSettings>();
+		BeginHashGridSelectionWithFootprintAndPreview(Command->CommandTag,
+			FVector2D(Command->PlacementFootprintCells),
+			Settings ? Settings->HashGridCellSize : 16.0f,
+			Command->PlacementPreviewUnit.LoadSynchronous());
+	}
+	else
+	{
+		BeginTargetingWithType(Command->CommandTag, Command->TargetType);
+	}
+	TargetingCommandDefinition = Command;
+	if (ULocalPlayer* LocalPlayer = PlayerController ? PlayerController->GetLocalPlayer() : nullptr)
+	{
+		if (URTSSelectionSubsystem* Selection = LocalPlayer->GetSubsystem<URTSSelectionSubsystem>())
+		{
+			Selection->RequestCommandRefresh();
+		}
+	}
+	return true;
 }
