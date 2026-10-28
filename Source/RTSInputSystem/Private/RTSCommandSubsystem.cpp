@@ -781,12 +781,21 @@ bool URTSCommandSubsystem::IssueMoveTo(UObject* WorldContext,
 	// Normal terrain speeds can be below the native stuck threshold. Keep the
 	// original player/strategic order until arrival or replacement.
 	MoveFailCondition.StuckTimeLimit = 0.0f;
+	const FVector SelectionCenter = UMassBattleFuncLib::GetAgentsAverageLocation(WorldContext, SelectedEntities);
+	const FAgentSpawnRectangleShapeData FormationShape;
 	for (const FRTSMoveNavigationBatch& Batch : Batches)
 	{
 		if (Batch.Entities.IsEmpty()) continue;
 		FMBMoveGoal Goal;
 		Goal.GoalType = EMBMoveGoalType::Location;
-		Goal.Locations.Init(Batch.Goal, Batch.Entities.Num());
+		const FVector BatchCenter = UMassBattleFuncLib::GetAgentsAverageLocation(WorldContext, Batch.Entities);
+		UMassBattleFuncLib::GenerateGridFormation(
+		    WorldContext, Batch.Entities, Batch.Goal + BatchCenter - SelectionCenter,
+		    FormationShape, EFormationAssignmentMode::KeepFormation, Goal.Locations);
+		if (FBox(Goal.Locations).ShiftBy(SelectionCenter - Batch.Goal).IsInsideXY(Location))
+		{
+		    Goal.Locations.Init(Batch.Goal, Batch.Entities.Num());
+		}
 		UE_LOG(LogRTSCommand, Log,
 			TEXT("Move command batch: Units=%d Navigation=%s Layer=%d"),
 			Batch.Entities.Num(), GetNavigationModeName(Batch.Navigation.Mode),
