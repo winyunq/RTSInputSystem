@@ -219,6 +219,16 @@ struct FRTSMassUnitTypeProtocol
 	TArray<FRTSMassUnitCommandSlotDefinition> CommandSlots;
 };
 
+/**
+ * @brief 保存命令面板、单位展示及输入配置。
+ * @details 命令和 HUD 按需从配置取得面板样式或声音。语音查询使用播报者和命令标签。
+ * 
+ * ```
+ * 面板与单位类型设置 → 选择面板 / 展示样式
+ * 播报者 + 命令标签 → CommandVoiceClips → 确认音效
+ * ```
+ * @ProductDocument
+ */
 UCLASS(Config=RTSInputSystem, DefaultConfig, BlueprintType, meta = (DisplayName = "RTS Input System"))
 class RTSINPUTSYSTEM_API URTSInputPanelSettings : public UDeveloperSettings
 {
@@ -234,6 +244,19 @@ public:
 	/** Comprehensive MassBattle FSubType.Index -> RTS UI/command/audio protocol mapping. */
 	UPROPERTY(Config, EditAnywhere, BlueprintReadOnly, Category = "RTS Mass Unit Protocol")
 	TArray<FRTSMassUnitTypeProtocol> MassUnitTypeProtocols;
+
+	/** Command cue paths keyed by AnnouncerId prefix plus command tag; bare command tags are defaults. */
+	UPROPERTY(Config, EditAnywhere, BlueprintReadOnly, Category = "RTS Command Voice")
+	TMap<FName, TSoftObjectPtr<USoundBase>> CommandVoiceClips;
+
+	/**
+	 * @brief 按播报者和命令标签解析命令音效。
+	 * @details 从完整播报者标识开始逐层尝试父级名称，最后查只按命令标签配置的通用音。首个命中键同步加载对应软引用。
+	 * @param AnnouncerId 播报者标识，可按点号分层。
+	 * @param CommandTag 已提交的命令标签。
+	 * @return 配置解析到的声音资源。没有匹配项或资源加载失败时为空。
+	 */
+	USoundBase* ResolveCommandVoice(FName AnnouncerId, FGameplayTag CommandTag) const;
 
 	/** Command panels are reusable capability sets and are intentionally separate from unit identity metadata. */
 	UPROPERTY(Config, EditAnywhere, BlueprintReadOnly, Category = "RTS Command Loadout")
@@ -299,7 +322,7 @@ public:
 	UPROPERTY(Config, EditAnywhere, BlueprintReadOnly, Category = "RTS Formation List", meta = (ClampMin = "1"))
 	int32 FormationListMaxSlots = 10;
 
-	/** Fixed width of each control-group card; the strip distributes spare width between cards. */
+	/** Maximum control-group width; slots keep the command-button proportions within this size. */
 	UPROPERTY(Config, EditAnywhere, BlueprintReadOnly, Category = "RTS Formation List", meta = (ClampMin = "1"))
 	int32 FormationListSlotWidth = 102;
 
@@ -307,7 +330,7 @@ public:
 	UPROPERTY(Config, EditAnywhere, BlueprintReadOnly, Category = "RTS Formation List", meta = (ClampMin = "1"))
 	int32 FormationListSlotHeight = 64;
 
-	/** Gap below the fixed control-group strip. Horizontal gaps are derived from the panel width. */
+	/** Gap between control-group slots and below the strip. */
 	UPROPERTY(Config, EditAnywhere, BlueprintReadOnly, Category = "RTS Formation List", meta = (ClampMin = "0"))
 	float FormationListSlotGap = 4.0f;
 

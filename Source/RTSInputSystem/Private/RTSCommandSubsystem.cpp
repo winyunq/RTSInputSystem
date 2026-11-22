@@ -9,6 +9,7 @@
 #include "Tasks/MassBattleBPTaskAgentsMoveTo.h"
 #include "Tasks/MassBattleBPTaskAgentsChaseAttack.h"
 #include "FuncLibs/MassBattleFuncLib.h"
+#include "FuncLibs/MassBattleFormationAlgorithms.h"
 #include "Components/MassBattleAgentComponent.h"
 #include "Fragments/Attack.h"
 #include "Fragments/Move.h"
@@ -157,7 +158,8 @@ bool URTSCommandSubsystem::SubmitLockstepCommand(FGameplayTag Tag,
     }
     if (Ids.IsEmpty()) return false;
     Ids.Sort();
-    // Version, queue, navigation scale, target UID, followed by selected UIDs.
+    // 受令句柄 → 网络 UID 去重与排序 → 锁步载荷
+    // 整数载荷依次记录版本、排队、导航尺度、目标 UID 与受令单位 UID。
     TArray<int32> Payload{1, bQueue ? 1 : 0, static_cast<int32>(Scale), TargetId};
     Payload.Append(Ids);
     TArray<float> Coordinates;
@@ -261,98 +263,7 @@ TArray<URTSCommandSubsystem*> URTSCommandSubsystem::GetWorldCommandOwners(UObjec
 	return Owners;
 }
 
-TArray<FEntityHandle> URTSCommandSubsystem::FilterEntitiesForCommand(UObject* WorldContext,
-	const TArray<FEntityHandle>& Entities,
-	FGameplayTag Tag,
-	bool bHasLocation,
-	bool bHasTargetActor)
-{
-	TArray<FEntityHandle> Result;
-	if (!Tag.IsValid() || Entities.IsEmpty())
-	{
-		return Result;
-	}
 
-	const UWorld* World = WorldContext ? WorldContext->GetWorld() : nullptr;
-	const UMassEntitySubsystem* MassSubsystem = World ? World->GetSubsystem<UMassEntitySubsystem>() : nullptr;
-	if (!MassSubsystem)
-	{
-		return Result;
-	}
-
-	const FGameplayTag MoveTag = GetCommandTag(MoveTagName);
-	const FGameplayTag AttackTag = GetCommandTag(AttackTagName);
-	const FGameplayTag StopTag = GetCommandTag(StopTagName);
-	const FGameplayTag HoldTag = GetCommandTag(HoldTagName);
-	const FGameplayTag PatrolTag = GetCommandTag(PatrolTagName);
-	const bool bMoveCommand = Tag == MoveTag || Tag == PatrolTag;
-	const bool bAttackCommand = Tag == AttackTag;
-	const bool bStopCommand = Tag == StopTag || Tag == HoldTag;
-
-	const FMassEntityManager& EntityManager = MassSubsystem->GetEntityManager();
-	const URTSInputPanelSettings* Settings = RTSUnitTypeProtocol::GetSettings();
-	Result.Reserve(Entities.Num());
-
-	for (const FEntityHandle& Entity : Entities)
-	{
-		const FMassEntityHandle NativeEntity = Entity;
-		if (!EntityManager.IsEntityActive(NativeEntity))
-		{
-			continue;
-		}
-
-		// An authored command card is also the authoritative capability declaration.
-		// This keeps production structures out of Move while allowing mobile units in
-		// the same selection to receive the very same right-click.
-		bool bAuthoredAttackCapability = false;
-		if (const FSubType* SubType = EntityManager.GetFragmentDataPtr<FSubType>(NativeEntity))
-		{
-			const FNetworking* Networking = EntityManager.GetFragmentDataPtr<FNetworking>(NativeEntity);
-			if (const FRTSMassUnitTypeProtocol* Protocol =
-				RTSUnitTypeProtocol::FindByNetworkKeyOrSubType(
-					Settings,
-					Networking ? Networking->Key : NAME_None,
-					SubType->Index))
-			{
-				if (!RTSUnitTypeProtocol::ExposesCommandButton(Settings, *Protocol, Tag))
-				{
-					continue;
-				}
-				bAuthoredAttackCapability = RTSUnitTypeProtocol::ExposesCommandButton(Settings, *Protocol, AttackTag);
-			}
-		}
-
-		const FMove* Move = EntityManager.GetFragmentDataPtr<FMove>(NativeEntity);
-		const FAttack* Attack = EntityManager.GetFragmentDataPtr<FAttack>(NativeEntity);
-		// The authored card also covers existing external weapon executors, such as
-		// mobile turrets whose native Attack is disabled to prevent double damage.
-		const bool bCanAttack = bAuthoredAttackCapability || (Attack && Attack->bEnable);
-		bool bCompatible = true;
-		if (bMoveCommand)
-		{
-			bCompatible = bHasLocation && Move && Move->bEnable;
-		}
-		else if (bAttackCommand)
-		{
-			// A ground attack is the default attack-move operation and therefore
-			// requires locomotion. A concrete target only requires attack capability.
-			bCompatible = bHasTargetActor
-				? bCanAttack
-				: bHasLocation && Move && Move->bEnable && bCanAttack;
-		}
-		else if (bStopCommand)
-		{
-			bCompatible = (Move && Move->bEnable) || bCanAttack;
-		}
-
-		if (bCompatible)
-		{
-			Result.Add(Entity);
-		}
-	}
-
-	return Result;
-}
 
 FGameplayTag URTSCommandSubsystem::GetActiveCommandTag(const TArray<FEntityHandle>& Entities) const
 {
@@ -506,17 +417,13 @@ bool URTSCommandSubsystem::IssueCommandForEntities(UObject* WorldContext, FGamep
 		return false;
 	}
 	const bool bHasTarget = UMassAPIFuncLib::IsValid(WorldContext, Target);
-	const TArray<FEntityHandle> CompatibleEntities =
-		FilterEntitiesForCommand(WorldContext, Entities, Tag, Location != nullptr, bHasTarget);
-	if (CompatibleEntities.IsEmpty()) return false;
-
-	const auto ClearReplacedOrders = [&Owners, &CompatibleEntities, bQueue]()
+	const  auto ClearReplacedOrders = [&Owners, &Entities, bQueue]()
 	{
 		if (!bQueue)
 		{
 			for (URTSCommandSubsystem* Owner : Owners)
 			{
-				Owner->ClearQueuedLocationCommands(CompatibleEntities);
+				Owner->ClearQueuedLocationCommands(Entities);
 			}
 		}
 	};
@@ -528,13 +435,13 @@ bool URTSCommandSubsystem::IssueCommandForEntities(UObject* WorldContext, FGamep
 		ClearReplacedOrders();
 		if (TasksPrepared) TasksPrepared(MoveTasks, ChaseTask);
 	};
-	const auto RecordAccepted = [&Owners, &CompatibleEntities, Tag](bool bAccepted)
+	const auto RecordAccepted = [&Owners, &Entities, Tag](bool bAccepted)
 	{
 		if (bAccepted)
 		{
 			for (URTSCommandSubsystem* Owner : Owners)
 			{
-				Owner->RecordCommandTag(CompatibleEntities, Tag);
+				Owner->RecordCommandTag(Entities, Tag);
 			}
 		}
 		return bAccepted;
@@ -543,22 +450,22 @@ bool URTSCommandSubsystem::IssueCommandForEntities(UObject* WorldContext, FGamep
 	if (Tag == StopTag || Tag == HoldTag)
 	{
 		ClearReplacedOrders();
-		UMassBattleFuncLib::StopAgentsAllMovement(WorldContext, CompatibleEntities);
+		UMassBattleFuncLib::StopAgentsAllMovement(WorldContext, Entities);
 		return RecordAccepted(true);
 	}
 	if (Tag == AttackTag && bHasTarget)
 	{
-		return RecordAccepted(IssueAttackTarget(WorldContext, CompatibleEntities, Target,
+		return RecordAccepted(IssueAttackTarget(WorldContext, Entities, Target,
 			PrepareAcceptedTasks, bTargetBehaviorsCanInterrupt));
 	}
 	if (!Location) return false;
 	if (bQueue)
 	{
 		if (!InputOwner || TasksPrepared) return false;
-		InputOwner->QueueLocationCommand(Tag, CompatibleEntities, *Location, Tag == AttackTag, NavigationScale);
+		InputOwner->QueueLocationCommand(Tag, Entities, *Location, Tag == AttackTag, NavigationScale);
 		return true;
 	}
-	return RecordAccepted(IssueMoveTo(WorldContext, CompatibleEntities, *Location,
+	return RecordAccepted(IssueMoveTo(WorldContext, Entities, *Location,
 		Tag == AttackTag, NavigationScale, PrepareAcceptedTasks, AcceptanceRadiusOverride, bNavigationRejected));
 }
 
@@ -751,7 +658,9 @@ bool URTSCommandSubsystem::IssueMoveTo(UObject* WorldContext,
 	// route costs. Explicit Strategic remains the caller's navigation parameter.
 	TArray<FRTSMoveNavigationBatch> Batches;
 	if (!FRTSMoveNavigationProviderRegistry::BuildBatches(
-		WorldContext, SelectedEntities, Location, Batches, NavigationScale) || Batches.IsEmpty())
+		WorldContext, SelectedEntities, Location, Batches,
+			NavigationScale == ERTSMoveNavigationScale::Auto
+				? ERTSMoveNavigationScale::Tactical : NavigationScale) || Batches.IsEmpty())
 	{
 		if (bNavigationRejected) *bNavigationRejected = true;
 		UE_LOG(LogRTSCommand, Warning,
@@ -781,27 +690,25 @@ bool URTSCommandSubsystem::IssueMoveTo(UObject* WorldContext,
 	// Normal terrain speeds can be below the native stuck threshold. Keep the
 	// original player/strategic order until arrival or replacement.
 	MoveFailCondition.StuckTimeLimit = 0.0f;
-	const FVector SelectionCenter = UMassBattleFuncLib::GetAgentsAverageLocation(WorldContext, SelectedEntities);
-	const FAgentSpawnRectangleShapeData FormationShape;
+		FAgentTaskVisualizationConfig Visualization;
+			Visualization.bEnabled = false;
 	for (const FRTSMoveNavigationBatch& Batch : Batches)
 	{
 		if (Batch.Entities.IsEmpty()) continue;
 		FMBMoveGoal Goal;
 		Goal.GoalType = EMBMoveGoalType::Location;
-		const FVector BatchCenter = UMassBattleFuncLib::GetAgentsAverageLocation(WorldContext, Batch.Entities);
-		UMassBattleFuncLib::GenerateGridFormation(
-		    WorldContext, Batch.Entities, Batch.Goal + BatchCenter - SelectionCenter,
-		    FormationShape, EFormationAssignmentMode::KeepFormation, Goal.Locations);
-		if (FBox(Goal.Locations).ShiftBy(SelectionCenter - Batch.Goal).IsInsideXY(Location))
-		{
-		    Goal.Locations.Init(Batch.Goal, Batch.Entities.Num());
-		}
-		UE_LOG(LogRTSCommand, Log,
-			TEXT("Move command batch: Units=%d Navigation=%s Layer=%d"),
-			Batch.Entities.Num(), GetNavigationModeName(Batch.Navigation.Mode),
-			Batch.Navigation.FlowFieldLayer.LayerID);
+		Goal.Locations = Batch.BuildGoalLocations
+					? Batch.BuildGoalLocations(Batch.Entities, Batch.Goal)
+					: Batch.GoalLocations;
+		        if (Goal.Locations.IsEmpty())
+		        {
+		            Goal.Locations.Init(Batch.Goal, Batch.Entities.Num());
+		        }
+		        UE_LOG(LogRTSCommand, Log, TEXT("Move command batch: Units=%d Navigation=%s Layer=%d Goals=%d"),
+		            Batch.Entities.Num(), GetNavigationModeName(Batch.Navigation.Mode), Batch.Navigation.FlowFieldLayer.LayerID,
+		            Goal.Locations.Num());
 		if (UMassBattleBPTaskAgentsMoveTo* MoveTask = UMassBattleBPTaskAgentsMoveTo::AgentsMoveTo(
-			WorldContext, Batch.Entities, Goal, Batch.Navigation, MoveFailCondition, bCanInterrupt))
+			WorldContext, Batch.Entities, Goal, Batch.Navigation, MoveFailCondition, bCanInterrupt, Visualization))
 		{
 			if (QueueOwner)
 			{
@@ -842,8 +749,10 @@ bool URTSCommandSubsystem::IssueAttackTarget(UObject* WorldContext,
 	if (!UMassAPIFuncLib::IsValid(WorldContext, TargetHandle)) return false;
 	FMBMoveFailCondition ChaseFailCondition;
 	ChaseFailCondition.StuckTimeLimit = 0.0f;
-	if (UMassBattleBPTaskAgentsChaseAttack* ChaseTask = UMassBattleBPTaskAgentsChaseAttack::AgentsChaseAttack(
-		WorldContext, SelectedEntities, TargetHandle, bTargetBehaviorsCanInterrupt, ChaseFailCondition))
+		FAgentTaskVisualizationConfig Visualization;
+			Visualization.bEnabled = false;
+		if (UMassBattleBPTaskAgentsChaseAttack* ChaseTask = UMassBattleBPTaskAgentsChaseAttack::AgentsChaseAttack(
+			WorldContext, SelectedEntities, TargetHandle, bTargetBehaviorsCanInterrupt, ChaseFailCondition, Visualization))
 	{
 		if (TasksPrepared) TasksPrepared({}, ChaseTask);
 		ChaseTask->Activate();

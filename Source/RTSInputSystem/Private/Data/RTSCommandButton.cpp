@@ -1,3 +1,16 @@
+/**
+ * @file RTSCommandButton.cpp
+ * @brief 实现命令按钮的上下文查询和两个目标入口。
+ * @details 调用方解析目标后交给 Execute。此版本由按钮持有的 CommandSelection 处理提交，受令组在选择子系统中按标签读取。
+ * @code{.unparsed}
+ * 单位与命令上下文 → 可用性 / 显示状态
+ * FEntityHandle 或 FVector → Execute(Target)
+ *                             ↓
+ *                      SubmitCommandContext(标签, 目标)
+ *                             ↓
+ *                      当前受令组 → 已登记的动作
+ * @endcode
+ */
 #include "Data/RTSCommandButton.h"
 #include "Interfaces/RTSCommandInterface.h"
 #include "RTSSelectionSubsystem.h"
@@ -5,6 +18,7 @@
 #include "Engine/Engine.h"
 #include "Engine/World.h"
 #include "Kismet/GameplayStatics.h"
+#include "GameFramework/PlayerController.h"
 
 void URTSCommandButton::GetCommandStateDependencies(const UObject* WorldContextObject,
 	const AActor* Executor, TArray<UObject*>& OutDependencies) const
@@ -17,61 +31,7 @@ void URTSCommandButton::GetCommandStateDependencies(const UObject* WorldContextO
 	}
 }
 
-void URTSCommandButton::Execute_Implementation(AActor* Executor)
-{
-    // 二进制逻辑：按钮通过信号中心（Subsystem）广播自己的意图。
-    // 这消除了对特定 UI 或 选拔 插件的硬依赖。
-    if (!CommandTag.IsValid()) return;
 
-    UWorld* World = Executor ? Executor->GetWorld() : nullptr;
-    if (!World && GEngine)
-    {
-        // Mass/landmark buttons usually execute without an Actor. Prefer the
-        // live game world explicitly; choosing the editor world first makes
-        // GetFirstLocalPlayerFromController() return null and drops the click.
-        for (const FWorldContext& Context : GEngine->GetWorldContexts())
-        {
-            if (Context.WorldType == EWorldType::Game || Context.WorldType == EWorldType::PIE)
-            {
-                World = Context.World();
-                break;
-            }
-        }
-
-        if (!World)
-        {
-            for (const FWorldContext& Context : GEngine->GetWorldContexts())
-            {
-                if (Context.WorldType == EWorldType::Editor)
-                {
-                    World = Context.World();
-                    break;
-                }
-            }
-        }
-    }
-    if (!World)
-    {
-        // Fallback: 在无上下文输入时优先从本地玩家控制器拿世界。
-        if (APlayerController* PC = UGameplayStatics::GetPlayerController(this, 0))
-        {
-            World = PC->GetWorld();
-        }
-    }
-
-    if (!World) return;
-
-    if (ULocalPlayer* LP = World->GetFirstLocalPlayerFromController())
-    {
-        if (URTSSelectionSubsystem* Selection = LP->GetSubsystem<URTSSelectionSubsystem>())
-        {
-            // The selection subsystem is the shared dispatch boundary for both
-            // Mass entities and actor-backed units. Going straight to the Mass
-            // command subsystem drops instant commands for a single actor unit.
-            Selection->IssueCommand(CommandTag);
-        }
-    }
-}
 
 bool URTSCommandButton::HandleAlternateClick_Implementation(UObject* WorldContextObject, AActor* Executor)
 {
@@ -146,4 +106,21 @@ FText URTSCommandButton::GetTooltipDescriptionForContext(
 int32 URTSCommandButton::GetQueueCountForContext_Implementation(UObject* WorldContextObject, AActor* Executor) const
 {
 	return 0;
+}
+
+
+
+
+
+void URTSCommandButton::Execute(FEntityHandle Target)
+{
+    if (!OnExecuteTarget.ExecuteIfBound(Target))
+    {
+        CommandSelection->SubmitCommandContext(CommandTag, {}, nullptr, Target);
+    }
+}
+
+void URTSCommandButton::Execute(const FVector& Target)
+{
+    CommandSelection->SubmitCommandContext(CommandTag, {}, &Target);
 }

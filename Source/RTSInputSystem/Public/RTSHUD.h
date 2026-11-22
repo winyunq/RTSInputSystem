@@ -6,6 +6,15 @@
 #include "GameFramework/HUD.h"
 #include "RTSHUD.generated.h"
 
+/**
+ * @brief 处理 HUD 的框选显示和屏幕选区请求。
+ * @details 记录框选开始与更新位置，并可按屏幕位置解析选择目标。
+ *
+ * ```
+ * 屏幕拖选起点 / 终点 → 选框显示
+ * 结束选择 → 按屏幕范围解析受选单位
+ * ```
+ */
 UCLASS()
 class RTSINPUTSYSTEM_API ARTSHUD : public AHUD
 {

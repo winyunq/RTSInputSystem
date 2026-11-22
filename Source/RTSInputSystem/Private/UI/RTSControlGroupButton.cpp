@@ -6,6 +6,10 @@
 #include "Components/TextBlock.h"
 #include "Engine/LocalPlayer.h"
 #include "Framework/Application/SlateApplication.h"
+#if WITH_DEV_AUTOMATION_TESTS
+#include "Misc/AutomationTest.h"
+#include "Engine/Texture2D.h"
+#endif
 
 URTSControlGroupButton::URTSControlGroupButton()
 {
@@ -58,11 +62,12 @@ void URTSControlGroupButton::SetControlGroupIndex(int32 InGroupIndex)
 	RefreshControlGroupState();
 }
 
-void URTSControlGroupButton::SetPresentationWidgets(UImage* InIcon, UTextBlock* InNumber, UTextBlock* InCount)
+void URTSControlGroupButton::SetPresentationWidgets(UImage* InIcon, UTextBlock* InNumber, UTextBlock* InCount, UImage* InActiveFrame)
 {
 	GroupIcon = InIcon;
 	GroupNumberText = InNumber;
 	GroupCountText = InCount;
+	GroupActiveFrame = InActiveFrame;
 	ApplyControlGroupView(CurrentGroupView);
 }
 
@@ -107,7 +112,12 @@ void URTSControlGroupButton::ApplyControlGroupView(const FRTSControlGroupView& G
 	// Empty groups retain their numbered slot but neither paint nor receive input.
 	SetVisibility(GroupView.bAssigned && GroupView.UnitCount > 0
 		? ESlateVisibility::Visible : ESlateVisibility::Hidden);
-	SetBackgroundColor(GroupView.bActive ? ActiveGroupColor : (GroupView.bAssigned ? AssignedGroupColor : EmptyGroupColor));
+	SetBackgroundColor(AssignedGroupColor);
+	if (GroupActiveFrame)
+	{
+		GroupActiveFrame->SetColorAndOpacity(ActiveGroupColor);
+		GroupActiveFrame->SetVisibility(GroupView.bActive ? ESlateVisibility::HitTestInvisible : ESlateVisibility::Collapsed);
+	}
 	SetToolTipText(BuildTooltip(GroupView));
 
 	if (GroupNumberText)
@@ -122,7 +132,7 @@ void URTSControlGroupButton::ApplyControlGroupView(const FRTSControlGroupView& G
 	}
 	if (GroupIcon)
 	{
-		GroupIcon->SetBrushFromTexture(GroupView.bAssigned ? GroupView.RepresentativeUnit.Icon : nullptr, true);
+		GroupIcon->SetBrushFromTexture(GroupView.bAssigned ? GroupView.RepresentativeUnit.Icon : nullptr);
 		GroupIcon->SetOpacity(GroupView.bAssigned ? 1.0f : 0.0f);
 	}
 	if (DefaultLabel)
@@ -205,3 +215,41 @@ void URTSControlGroupButton::HandleClicked()
 	}
 	LastRecallClickTime = CurrentTime;
 }
+
+#if WITH_DEV_AUTOMATION_TESTS
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FRTSControlGroupFeedbackTest, "Winyunq.Input.UnitPresentation.ControlGroupFeedback",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+bool FRTSControlGroupFeedbackTest::RunTest(const FString& Parameters)
+{
+	URTSControlGroupButton* Button = NewObject<URTSControlGroupButton>();
+	UImage* Icon = NewObject<UImage>();
+	UImage* Frame = NewObject<UImage>();
+	UTextBlock* Number = NewObject<UTextBlock>();
+	UTextBlock* Count = NewObject<UTextBlock>();
+	FSlateBrush Brush;
+	Brush.ImageSize = FVector2D(64, 64);
+	Icon->SetBrush(Brush);
+	Button->SetPresentationWidgets(Icon, Number, Count, Frame);
+	FRTSControlGroupView View;
+	View.GroupIndex = Button->ControlGroupIndex;
+	View.bAssigned = true;
+	View.UnitCount = 12;
+	View.RepresentativeUnit.Icon = NewObject<UTexture2D>();
+	Button->ApplyControlGroupView(View);
+	TestEqual(TEXT("Texture resolution does not resize a formation icon"), FVector2D(Icon->GetBrush().ImageSize), FVector2D(64, 64));
+	TestEqual(TEXT("Assigned group shows its number"), Number->GetText().ToString(), FString::FromInt(View.GroupIndex));
+	TestEqual(TEXT("Inactive group hides the state frame"), Frame->GetVisibility(), ESlateVisibility::Collapsed);
+	const FLinearColor Background = Button->GetBackgroundColor();
+	View.bActive = true;
+	Button->ApplyControlGroupView(View);
+	TestEqual(TEXT("Active group shows the state frame"), Frame->GetVisibility(), ESlateVisibility::HitTestInvisible);
+	TestEqual(TEXT("Active group preserves the shared button background"), Button->GetBackgroundColor(), Background);
+	View.bAssigned = false;
+	View.bActive = false;
+	View.UnitCount = 0;
+	Button->ApplyControlGroupView(View);
+	TestEqual(TEXT("Empty group keeps its numbered slot without painting"), Button->GetVisibility(), ESlateVisibility::Hidden);
+	return true;
+}
+#endif

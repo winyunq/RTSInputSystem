@@ -372,7 +372,8 @@ void URTSCommanderGridWidget::SynchronizeProperties()
 
 void URTSCommanderGridWidget::NativeConstruct()
 {
-	Super::NativeConstruct();
+	Super::NativeConstruct ();
+	 CommandSelector = GetOwningPlayer()->FindComponentByClass<URTSSelector> ();
 
 	// The command tooltip is part of the command panel, not a mouse-following
 	// tooltip. Blueprint defaults from older widget instances must not move it
@@ -626,11 +627,9 @@ void URTSCommanderGridWidget::RefreshGrid(const TArray<URTSCommandButton*>& Butt
 			{ return (Data.GroupKey.IsEmpty() ? Data.Name : Data.GroupKey) == LastSelectionView.ActiveGroupKey; });
 		Owner = Active ? *Active : LastSelectionView.Items[0];
 	}
-	Owner.ActorPtr = ActiveActorPtr.Get();
-	TArray<FRTSUnitData> CommandOwners{Owner};
-	if (ULocalPlayer* Player = GetOwningLocalPlayer())
-		if (auto* Selection = Player->GetSubsystem<URTSSelectionSubsystem>())
-			CommandOwners = Selection->GetUnitGroupMembers(LastSelectionView.ActiveGroupKey);
+	URTSSelectionSubsystem* Selection = GetOwningLocalPlayer()->GetSubsystem<URTSSelectionSubsystem>();
+		  Selection->RebuildCommandIndex(Buttons); const TArray<FRTSUnitData>
+			CommandOwners =  Owner.GetProgressProvider() ? Selection->GetUnitGroupMembers(LastSelectionView.ActiveGroupKey  ) : TArray<FRTSUnitData>{Owner} ;
 	TArray<URTSCommandButtonWidget*> DesiredButtons;
 	DesiredButtons.SetNumZeroed(CommandGridSlotCount);
 	bool bHotkeysChanged = false;
@@ -655,7 +654,7 @@ void URTSCommanderGridWidget::RefreshGrid(const TArray<URTSCommandButton*>& Butt
 			|| Button->CommandHotkey != Hotkey)
 			Button->Init(Buttons[i], Owner.ActorPtr, Hotkey);
 		if (Button->GetParent() != GridSlots[i]) GridSlots[i]->AddChild(Button);
-		Button->BindCommandState(CommandOwners);
+		Button->BindCommandState(CommandOwners  );
 	}
 
 	if (bHotkeysChanged) RebuildCommandPanelHotkeys();
@@ -683,7 +682,7 @@ URTSCommandButtonWidget* URTSCommanderGridWidget::GetCommandButtonInstance(
 	{ RootSize->SetWidthOverride(ButtonSize.X); RootSize->SetHeightOverride(ButtonSize.Y); }
 	Button->CommandOwnerEntity = Owner.EntityHandle;
 	Button->Init(Definition, Owner.ActorPtr, Definition->Hotkey);
-	Button->OnCommandClicked.AddUniqueDynamic(this, &URTSCommanderGridWidget::OnGridButtonClicked);
+	Button->OnCommandClicked.AddUObject(this, &URTSCommanderGridWidget::OnGridButtonClicked);
 	CommandButtonInstances.Add(Button);
 	return Button;
 }
@@ -823,69 +822,21 @@ void URTSCommanderGridWidget::OnCommandNavigationRequested(URTSCommandGridAsset*
 
 #include "Data/RTSCmd_SubMenu.h"
 
-void URTSCommanderGridWidget::OnGridButtonClicked(const FGameplayTag& CommandTag)
+void URTSCommanderGridWidget::OnGridButtonClicked(URTSCommandButtonWidget* Button)
 {
-    // 二进制核心：直接执行
-    // 理由：虽然 UI 代理传回的是 Tag，但我们立即将其还原回 Button 对象，
-    // 以便执行其包含完整 C++ 逻辑的回调函数（Execute），彻底废除“Actor 查找”链路。
-    URTSCommandButton* ClickedData = nullptr;
-    for (URTSCommandButtonWidget* BtnWidget : GridButtons)
-    {
-        if (BtnWidget && BtnWidget->GetVisibility() == ESlateVisibility::Visible)
-        {
-            if (URTSCommandButton* Data = BtnWidget->GetData())
-            {
-                if (Data->CommandTag.MatchesTagExact(CommandTag))
-                {
-                    ClickedData = Data;
-                    break;
-                }
-            }
-        }
-    }
+    // 控件点击 → GetData → 原按钮 → 目标命令进入瞄准
+    //                           └→ 即时命令提交空目标
+    // 瞄准保存原命令定义，提交时直接访问当前共享命令索引。
+    // 即时命令沿用现有 Execute 接口。
+    
+        
+                URTSCommandButton* Command = Button->GetData();
+                
+                
+                if (CommandSelector->BeginCommandTargeting(Command)) return;
 
-    if (!ClickedData) return;
-
-    if (ULocalPlayer* LP = GetOwningLocalPlayer())
-    {
-        if (URTSSelectionSubsystem* Selection = LP->GetSubsystem<URTSSelectionSubsystem>())
-        {
-            // 对于非针对单位的逻辑（如顾问、科技），Actor 指针可能为空，
-            // 但对于“兴奋剂”等单位技能，我们需要传入正确的执行者。
-            AActor* ActiveActor = Selection->GetActiveActor();
-            const bool bNeedsTarget = ClickedData->TargetType == ERTSCommandTargetType::Location ||
-                                     ClickedData->TargetType == ERTSCommandTargetType::LocationOrTarget ||
-                                     ClickedData->TargetType == ERTSCommandTargetType::TargetActor;
-
-            // Mass-only 选择下，当前没有 ActiveActor 时不能走“直接 Execute on actor”。
-            // 用于目标类命令时，进入 RTSSelector 的瞄点模式；否则直接走全局选中执行。
-            if (bNeedsTarget)
-            {
-                if (APlayerController* PC = GetOwningPlayer())
-                {
-                    if (URTSSelector* Selector = PC->FindComponentByClass<URTSSelector>())
-                    {
-						Selector->BeginCommandTargeting(ClickedData);
-                        return;
-                    }
-                }
-                UE_LOG(LogTemp, Warning, TEXT("RTSCommanderGridWidget: Targeting command %s ignored, selector missing."), *CommandTag.ToString());
-            }
-            else if (ActiveActor && ActiveActor->Implements<URTSCommandInterface>())
-            {
-                // 战术直达：按钮逻辑自决 (Pure Callback)
-                ClickedData->Execute(ActiveActor);
-            }
-            else
-            {
-            // Fallback for actor-less selection (pure Mass entities). Let the button
-                // asset decide first; the default button implementation still routes
-                // ordinary Mass commands through URTSCommandSubsystem.
-                ClickedData->Execute(GetOwningPlayer());
-            }
-
-        }
-    }
+     Command->CommandSelection->ExecuteCommand(Command, nullptr, FEntityHandle() ) ;
+            
 }
 
 // --- Shared Tooltip Implementation ---
@@ -1256,6 +1207,12 @@ void URTSCommanderGridWidget::ExecuteCommandPanelSlot(int32 SlotIndex)
 	
 
 	ButtonWidget->HandleClicked();
+}
+
+void URTSCommanderGridWidget::NativeTick(const FGeometry& MyGeometry, float InDeltaTime)
+{
+	Super::NativeTick(MyGeometry, InDeltaTime);
+	if (IsVisible()) UpdateCommandStateVisuals();
 }
 
 void URTSCommanderGridWidget::UpdateCommandStateVisuals()

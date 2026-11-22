@@ -9,7 +9,14 @@
 
 DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(FOnRTSSelectionQueryExecuted, int32, SelectedUnitCount);
 
-/** Generic, directly placeable UMG button for Mass-first world-wide selection queries. */
+/** Generic, directly placeable UMG button for Mass-first world-wide selection queries. 
+ * @brief 通过配置查询条件触发一次快速选区。
+ * @details 点击时从按钮配置和键盘修饰键取得查询模式，交给选区系统并发送查询事件。
+ * 
+ * ```
+ * 查询配置 + 修饰键 → ExecuteSelectionQuery → 选区结果
+ * ```
+ */
 UCLASS(BlueprintType, Blueprintable, meta = (DisplayName = "RTS Selection Query Button"))
 class RTSINPUTSYSTEM_API URTSSelectionQueryButton : public UButton
 {
@@ -31,6 +38,11 @@ public:
 	UPROPERTY(BlueprintAssignable, Category = "RTS Quick Selection")
 	FOnRTSSelectionQueryExecuted OnSelectionQueryExecuted;
 
+	/**
+	 * @brief 用配置的查询条件改变本地选区。
+	 * @details 读取有效查询定义。可在按住 Shift 或 Ctrl 时覆盖为追加或移除，结果通过 OnSelectionQueryExecuted 发送。
+	 * @return 选区查询返回的单位数量。取不到选区子系统时返回 0。
+	 */
 	UFUNCTION(BlueprintCallable, Category = "RTS Quick Selection")
 	int32 ExecuteSelectionQuery();
 

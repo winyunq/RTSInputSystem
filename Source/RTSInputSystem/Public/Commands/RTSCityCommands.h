@@ -525,6 +525,14 @@ public:
  * (New) City Command Grid - Concrete implementation for all Cities
  * Handles the player-facing City commands without allocating UObjects on
  * every UI refresh. Built-in command CDOs are immutable shared definitions.
+ * @brief 提供城市的招募、放置和管理命令。
+ * @details GetAllButtons 返回各城市命令 C++ 类的默认按钮定义。
+ * 
+ * ```
+ * 城市面板 → GetAllButtons
+ *           ├→ 招募 / 迁都 / 移交
+ *           └→ 工业及军事建筑放置
+ * ```
  */
 UCLASS()
 class RTSINPUTSYSTEM_API URTSCityCommandGrid : public URTSCommandGridAsset
@@ -532,6 +540,11 @@ class RTSINPUTSYSTEM_API URTSCityCommandGrid : public URTSCommandGridAsset
     GENERATED_BODY()
 
 public:
+    /**
+     * @brief 取得城市面板的默认按钮定义。
+     * @details 按固定顺序返回招募、迁都、移交和建筑放置按钮类的默认对象。
+     * @return 城市可展示的原按钮定义列表。
+     */
     virtual TArray<URTSCommandButton*> GetAllButtons() const override
     {
         TArray<URTSCommandButton*> Result;

@@ -48,14 +48,12 @@ namespace
 void URTSUnitPanelWidget::NativeTick(const FGeometry& MyGeometry, float InDeltaTime)
 {
 	Super::NativeTick(MyGeometry, InDeltaTime);
-	const UMassBattleSubsystem* Battle = UMassBattleSubsystem::GetPtr(this);
-	const int32 CurrentTick = Battle ? Battle->GetTickCount() : INDEX_NONE;
 	UProgressBar* Bars[] = {ActiveProgress0, ActiveProgress1};
 	for (int32 Index = 0; Index < UE_ARRAY_COUNT(ActiveProgressItems); ++Index)
 	{
 		const FRTSTimedCommandInstance& Item = ActiveProgressItems[Index];
 		if (Item.State != ERTSTimedCommandState::Active || !Bars[Index]) continue;
-		Bars[Index]->SetPercent(Item.GetProgress01AtTick(CurrentTick));
+		Bars[Index]->SetPercent(static_cast<float>(Item.GetProgress01()));
 	}
 }
 
@@ -286,7 +284,7 @@ TSharedRef<SWidget> URTSUnitPanelWidget::RebuildWidget()
 		UOverlay* Equipment = CastChecked<UOverlay>(Add(UOverlay::StaticClass(), TEXT("UnitEquipmentRoutes"), Box(TEXT("UnitEquipmentBounds"), Middle)));
 		UHorizontalBox* Combat = Row(TEXT("WeaponArmorPanel"), Equipment);
 		WeaponArmorPanel = Combat;
-		for (const FString Prefix : {FString(TEXT("Weapon")), FString(TEXT("Armor"))})
+        for (const FString& Prefix : {FString(TEXT("Weapon")), FString(TEXT("Armor"))})
 		{
 			UVerticalBox* Card = Column(*(Prefix + TEXT("Card")), Box(*(Prefix + TEXT("CardBounds")), Combat));
 			Text(*(Prefix + TEXT("Title")), Prefix == TEXT("Weapon") ? TEXT("武器") : TEXT("护甲"), Card);
@@ -747,8 +745,7 @@ void URTSUnitPanelWidget::ShowCommandProgressItems(const FRTSUnitData& OwnerData
 					TAttribute<FText>::FGetter::CreateWeakLambda(this, [this, Position]()
 					{
 						const FRTSTimedCommandInstance& Task = ActiveProgressItems[Position];
-						const UMassBattleSubsystem* Battle = UMassBattleSubsystem::GetPtr(this);
-						const float Progress01 = Task.GetProgress01AtTick(Battle ? Battle->GetTickCount() : INDEX_NONE);
+						const float Progress01 = static_cast<float>(Task.GetProgress01());
 						return FText::FromString(FString::Printf(TEXT("%.1f / %.1f 秒"),
 							Progress01 * Task.DurationSeconds, Task.DurationSeconds));
 					})));
@@ -856,7 +853,7 @@ void URTSUnitPanelWidget::RefreshSingleUnitDetail(const FRTSUnitData& Data)
 	SetOptionalDetailText(TEXT("WeaponStats"), Data.bHasWeapon
 		? FString::Printf(TEXT("基础伤害  %.0f\n射程  %.0f\n冷却  %.1fs"), Data.WeaponDamage, Data.WeaponRange, Data.WeaponPeriod)
 		: TEXT("无武器"));
-	SetOptionalDetailText(TEXT("ArmorStats"), FString::Printf(TEXT("普通伤害减免\n%.0f%%"), Data.ArmorReduction * 100.0f));
+	SetOptionalDetailText(TEXT("ArmorStats"), FString::Printf(TEXT("%s\n%s"), *FText::FromStringTable(TEXT("/Game/UI/HeadUpDisplay/UnitGallery/ST_UnitDescriptions.ST_UnitDescriptions"), TEXT("Stat.Armor")).ToString(), *FText::AsNumber(Data.ArmorReduction).ToString()));
 	for (const TCHAR* Part : {TEXT("Weapon"), TEXT("Armor")})
 	{
 		UWidget* Card = FindDescendantWidgetByName(DetailRoot, *FString::Printf(TEXT("%sCard"), Part));
@@ -882,8 +879,7 @@ void URTSUnitPanelWidget::RefreshSingleUnitDetail(const FRTSUnitData& Data)
 				};
 			}
 			else if (!bWeapon)
-				Detail.EffectRows.Add({FText::FromString(TEXT("普通伤害减免")),
-					FText::AsPercent(Data.ArmorReduction), TEXT("Armor")});
+				Detail.EffectRows.Add({FText::FromStringTable(TEXT("/Game/UI/HeadUpDisplay/UnitGallery/ST_UnitDescriptions.ST_UnitDescriptions"), TEXT("Stat.Armor")), FText::AsNumber(Data.ArmorReduction), TEXT("Armor")});
 			else Detail.Description = FText::FromString(TEXT("无武器"));
 			Tooltip->SetTooltipContent(FText::FromString(bWeapon ? TEXT("武器") : TEXT("护甲")), Detail, nullptr);
 		}
@@ -974,7 +970,7 @@ void URTSUnitPanelWidget::RefreshSingleUnitActivity(const FRTSUnitData& Data)
 		}
 	}
 	if (UTextBlock* TextBlock = Cast<UTextBlock>(
-		FindDescendantWidgetByName(DetailRoot, TEXT("ActivityText"))))
+			FindDescendantWidgetByName(DetailRoot, TEXT("ActivityText"))))
 	{
 		TextBlock->SetText(FText::FromString(ActivityText));
 		TextBlock->SetVisibility(

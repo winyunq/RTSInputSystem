@@ -1,3 +1,13 @@
+/**
+ * @file RTSSelectionSubsystem.cpp
+ * @brief 实现选区分组、活动面板选择和命令下发。
+ * @details 分组时保存一次实体句柄。执行阶段从命令索引取组，原生多组命令拼接一次句柄数组。
+ * @code{.unparsed}
+ * 选中实体 → HUD 资料 + 共享组句柄
+ * 面板命令 + 组类型协议 → 按钮映射 / 响应组映射
+ * 执行输入 → 按标签取组 → 业务动作或原生发令 → 确认反馈
+ * @endcode
+ */
 #include "RTSSelectionSubsystem.h"
 #include "GenericTeamAgentInterface.h"
 #include "Engine/LocalPlayer.h"
@@ -21,6 +31,10 @@
 #include "Components/MassBattleAgentComponent.h"
 #include "DataAssets/MassBattleAgentConfigDataAsset.h"
 #include "Fragments/Health.h"
+#include "Fragments/Render.h"
+#include "Rendering/MassBattleAgentRenderer.h"
+#include "Subsystems/MassBattleSubsystem.h"
+#include "NiagaraDataInterfaceArrayFunctionLibrary.h"
 #include "Fragments/Attack.h"
 #include "Fragments/Damage.h"
 #include "Fragments/Defence.h"
@@ -40,6 +54,8 @@
 #include "Algo/AllOf.h"
 #include "Engine/ObjectLibrary.h"
 #include "UObject/StrongObjectPtr.h"
+#include <algorithm>
+#include "GameFramework/GameStateBase.h"
 
 DEFINE_LOG_CATEGORY(LogORTSSelection);
 
@@ -646,13 +662,7 @@ namespace
 		return ERTSCommandTargetType::Instant;
 	}
 
-	bool IsComposableContextCommand(const FGameplayTag& CommandTag)
-	{
-		const FName TagName = CommandTag.GetTagName();
-		return TagName == FName(TEXT("RTS.Command.Move"))
-			|| TagName == FName(TEXT("RTS.Command.Attack"))
-			|| TagName == FName(TEXT("RTS.Command.Patrol"));
-	}
+	
 
 	bool ClearsTaskVisualization(const FGameplayTag& CommandTag)
 	{
@@ -663,119 +673,8 @@ namespace
 
 	URTSCommandButton* CreateDefaultCommandButtonForTag(UObject* Outer, const FGameplayTag& CommandTag)
 	{
-		const FName TagName = CommandTag.GetTagName();
-		if (TagName == FName(TEXT("RTS.Command.Move")))
-		{
-			return NewObject<URTSCmd_Move>(Outer);
-		}
-		if (TagName == FName(TEXT("RTS.Command.Attack")))
-		{
-			return NewObject<URTSCmd_Attack>(Outer);
-		}
-		if (TagName == FName(TEXT("RTS.Command.Stop")))
-		{
-			return NewObject<URTSCmd_Stop>(Outer);
-		}
-		if (TagName == FName(TEXT("RTS.Command.Hold")))
-		{
-			return NewObject<URTSCmd_HoldPosition>(Outer);
-		}
-		if (TagName == FName(TEXT("RTS.Command.Patrol")))
-		{
-			return NewObject<URTSCmd_Patrol>(Outer);
-		}
-		if (TagName == FName(TEXT("RTS.Command.Build.Factory")))
-		{
-			return NewObject<URTSCmd_BuildFactory>(Outer);
-		}
-		if (TagName == FName(TEXT("RTS.Command.Build.University")))
-		{
-			return NewObject<URTSCmd_BuildUniversity>(Outer);
-		}
-		if (TagName == FName(TEXT("RTS.Command.Build.Airfield")))
-		{
-			return NewObject<URTSCmd_BuildAirfield>(Outer);
-		}
-		if (TagName == FName(TEXT("RTS.Command.Build.Shipyard")))
-		{
-			return NewObject<URTSCmd_BuildShipyard>(Outer);
-		}
-		if (TagName == FName(TEXT("RTS.Command.Build.ResearchCenter")))
-		{
-			return NewObject<URTSCmd_BuildResearchCenter>(Outer);
-		}
-		if (TagName == FName(TEXT("RTS.Command.Build.IndustrialPark")))
-		{
-			return NewObject<URTSCmd_BuildIndustrialPark>(Outer);
-		}
-		if (TagName == FName(TEXT("RTS.Command.Build.Refinery")))
-		{
-			return NewObject<URTSCmd_BuildRefinery>(Outer);
-		}
-		if (TagName == FName(TEXT("RTS.Command.Build.Barracks")))
-		{
-			return NewObject<URTSCmd_BuildBarracks>(Outer);
-		}
-		if (TagName == FName(TEXT("RTS.Command.Build.TankFactory")))
-		{
-			return NewObject<URTSCmd_BuildTankFactory>(Outer);
-		}
-		if (TagName == FName(TEXT("RTS.Command.Build.VehicleFactory")))
-		{
-			return NewObject<URTSCmd_BuildVehicleFactory>(Outer);
-		}
-		if (TagName == FName(TEXT("RTS.Command.Build.Defense")))
-		{
-			return NewObject<URTSCmd_BuildDefense>(Outer);
-		}
-		if (TagName == FName(TEXT("RTS.Command.Build.GarrisonBunker")))
-		{
-			return NewObject<URTSCmd_BuildGarrisonBunker>(Outer);
-		}
-		if (TagName == FName(TEXT("RTS.Command.Build.MortarBunker")))
-		{
-			return NewObject<URTSCmd_BuildMortarBunker>(Outer);
-		}
-		if (TagName == FName(TEXT("RTS.Command.Build.CoastalBattery")))
-		{
-			return NewObject<URTSCmd_BuildCoastalBattery>(Outer);
-		}
-		if (TagName == FName(TEXT("RTS.Command.Build.FieldCover")))
-		{
-			return NewObject<URTSCmd_BuildFieldCover>(Outer);
-		}
-		if (TagName == FName(TEXT("RTS.Command.Build.MachineGunBunker")))
-		{
-			return NewObject<URTSCmd_BuildMachineGunBunker>(Outer);
-		}
-		if (TagName == FName(TEXT("RTS.Command.Build.AntiTankBunker")))
-		{
-			return NewObject<URTSCmd_BuildAntiTankBunker>(Outer);
-		}
-		if (TagName == FName(TEXT("RTS.Command.Build.AntiAircraftEmplacement")))
-		{
-			return NewObject<URTSCmd_BuildAntiAircraftEmplacement>(Outer);
-		}
-		if (TagName == FName(TEXT("RTS.Command.Build.AntiTankObstacle")))
-		{
-			return NewObject<URTSCmd_BuildAntiTankObstacle>(Outer);
-		}
-		if (TagName == FName(TEXT("RTS.Command.Build.BarbedWire")))
-		{
-			return NewObject<URTSCmd_BuildBarbedWire>(Outer);
-		}
-
 		URTSCommandButton* Button = NewObject<URTSCommandButton>(Outer);
 		Button->CommandTag = CommandTag;
-		Button->TargetType = TagName.ToString().StartsWith(TEXT("RTS.Command.Build."))
-			? ERTSCommandTargetType::Location
-			: ERTSCommandTargetType::Instant;
-
-		FString Label = TagName.ToString();
-		Label.RemoveFromStart(TEXT("RTS.Command."));
-		Label.ReplaceInline(TEXT("."), TEXT(" "));
-		Button->DisplayName = FText::FromString(Label.IsEmpty() ? TEXT("Command") : Label);
-		Button->Description = FText::FromString(FString::Printf(TEXT("Execute %s."), *Button->DisplayName.ToString()));
 		return Button;
 	}
 
@@ -1271,58 +1170,57 @@ TArray<FEntityHandle> URTSSelectionSubsystem::GetControllableSelectedEntities() 
 FRTSSelectionView URTSSelectionSubsystem::BuildSelectionView()
 {
 	FRTSSelectionView View;
-	int32 TotalCount = SelectedActors.Num() + SelectedEntities.Num();
+	 const int32 TotalCount = SelectedActors.Num() + SelectedEntities.Num();
 	const URTSInputPanelSettings* Settings = GetDefault<URTSInputPanelSettings>();
 	const int32 SummaryThreshold = Settings
 		? FMath::Max(1, Settings->SelectionSummaryThreshold)
 		: 16;
 
-	if (TotalCount == 0)
+	
+		View.Mode =  TotalCount == 0 ? ERTSSelectionMode::Empty:TotalCount == 1 ? ERTSSelectionMode::Single
+	        : TotalCount <= SummaryThreshold ? ERTSSelectionMode::List : ERTSSelectionMode::Summary;
+	    TArray<TSharedPtr<FRTSSelectionView>> Groups;
+	        int32 NewActiveIndex = INDEX_NONE;
+	    
+	    TMap<FString, int32> GroupIndices;
+	    TArray<TArray<FEntityHandle>> GroupEntities;
+	    TMap<FString, FRTSUnitData> Summaries;
+	    const auto AddUnit = [&](FRTSUnitData Data )
 	{
-		View.Mode = ERTSSelectionMode::Empty;
+		 if ( View .Mode == ERTSSelectionMode::Single) View.SingleUnit = Data;
+		        if (View.Mode == ERTSSelectionMode::Summary) AddOrUpdateSummaryGroup(Summaries, Data);
+		        else View.Items.Add(Data);
+		        if (!Data.bIsMassEntity) return;
+		        const FString Key = GetSelectionUnitGroupKey(Data);
+		        int32* Existing = GroupIndices.Find(Key);
+		        const int32 Index = Existing ? *Existing : Groups.Num();
+		        if (!Existing)
+		        {
+		            GroupIndices.Add(Key, Index);
+		            const auto Group = MakeShared<FRTSSelectionView>();
+		             Groups.Add( Group );
+		            		            Group->Mode = ERTSSelectionMode::Single;
+		Group->ActiveGroupKey = Key;
+		            Group->SingleUnit = Data;
+		            Group->CommandPlayer = GetLocalPlayer();
+		GroupEntities.AddDefaulted();
+		}
+		        GroupEntities[Index].Add(Data.EntityHandle);
+		        if (!Data.ProgressSourceId.IsNone()) Groups[Index]->CommandSourceIds.Add(Data.ProgressSourceId);
 	}
-	else if (TotalCount == 1)
-	{
-		View.Mode = ERTSSelectionMode::Single;
-		if (SelectedActors.Num() > 0) View.SingleUnit = CreateUnitDataFromActor(SelectedActors[0]);
-		else View.SingleUnit = CreateUnitDataFromEntity(SelectedEntities[0]);
-		View.Items.Add(View.SingleUnit);
-	}
-	else if (TotalCount <= SummaryThreshold)
-	{
-		View.Mode = ERTSSelectionMode::List;
-		for (AActor* Actor : SelectedActors) View.Items.Add(CreateUnitDataFromActor(Actor));
-		for (const FEntityHandle& Handle : SelectedEntities) View.Items.Add(CreateUnitDataFromEntity(Handle));
+	;
+		for (AActor* Actor : SelectedActors) AddUnit(CreateUnitDataFromActor(Actor));
+		for (const FEntityHandle& Entity : SelectedEntities ) AddUnit(CreateUnitDataFromEntity(Entity));
+		    for (int32 Index = 0; Index < Groups.Num(); ++Index)
+		        Groups[Index]->CommandEntities = MakeShared<const TArray<FEntityHandle>>(MoveTemp(GroupEntities[Index]));
+		    if (View.Mode == ERTSSelectionMode::Summary)
+		        for (auto& Pair : Summaries ) View.Items.Add(MoveTemp(Pair.Value));
 		View.Items.Sort([](const FRTSUnitData& A, const FRTSUnitData& B)
 		{
-			const int32 NameCompare = A.Name.Compare(B.Name);
-			return NameCompare == 0 ? GetSelectionUnitGroupKey(A) < GetSelectionUnitGroupKey(B) : NameCompare < 0;
+			const int32 Compare = A.Name.Compare(B.Name);
+			return Compare == 0 ? GetSelectionUnitGroupKey(A) < GetSelectionUnitGroupKey(B) : Compare < 0;
 		});
-	}
-	else
-	{
-		View.Mode = ERTSSelectionMode::Summary;
-		TMap<FString, FRTSUnitData> GroupMap;
-
-		for (AActor* Actor : SelectedActors)
-		{
-			FRTSUnitData Data = CreateUnitDataFromActor(Actor);
-			AddOrUpdateSummaryGroup(GroupMap, Data);
-		}
-
-		for (const FEntityHandle& Handle : SelectedEntities)
-		{
-			FRTSUnitData Data = CreateUnitDataFromEntity(Handle);
-			AddOrUpdateSummaryGroup(GroupMap, Data);
-		}
-
-		for (auto& Pair : GroupMap) View.Items.Add(Pair.Value);
-		View.Items.Sort([](const FRTSUnitData& A, const FRTSUnitData& B)
-		{
-			const int32 NameCompare = A.Name.Compare(B.Name);
-			return NameCompare == 0 ? GetSelectionUnitGroupKey(A) < GetSelectionUnitGroupKey(B) : NameCompare < 0;
-		});
-	}
+	
 
 	// --- Tab Cycling ---
 	const FString PreviousActiveKey = AvailableGroupKeys.IsValidIndex(CurrentGroupIndex)
@@ -1337,7 +1235,6 @@ FRTSSelectionView URTSSelectionSubsystem::BuildSelectionView()
 		AvailableGroupKeys.AddUnique(GroupKey);
 		GroupCounts.FindOrAdd(GroupKey) += FMath::Max(1, Item.Count);
 	}
-	AvailableGroupKeys.Sort();
 
 	bool bPreservedActiveGroup = false;
 	if (!PreviousActiveKey.IsEmpty())
@@ -1353,7 +1250,9 @@ FRTSSelectionView URTSSelectionSubsystem::BuildSelectionView()
 	if (AvailableGroupKeys.IsEmpty())
 	{
 		CurrentGroupIndex = INDEX_NONE;
-		return View;
+		 CommandGroups = MoveTemp(Groups);
+		    ActiveCommandGroupIndex = NewActiveIndex;
+		    CommandGroupIndex.Reset(); return  CurrentSelectionView = MoveTemp( View ) ;
 	}
 
 	if (!bPreservedActiveGroup)
@@ -1375,19 +1274,21 @@ FRTSSelectionView URTSSelectionSubsystem::BuildSelectionView()
 
 	if (AvailableGroupKeys.IsValidIndex(CurrentGroupIndex)) View.ActiveGroupKey = AvailableGroupKeys[CurrentGroupIndex];
 
-	return View;
+	 if (const int32* Active = GroupIndices.Find(View.ActiveGroupKey)) NewActiveIndex = *Active ; CommandGroups = MoveTemp(Groups);
+	     ActiveCommandGroupIndex = NewActiveIndex;
+	     CommandGroupIndex.Reset() ; return  CurrentSelectionView = MoveTemp( View ) ;
 }
 
 TArray<FRTSUnitData> URTSSelectionSubsystem::GetUnitGroupMembers(const FString& GroupKey) const
 {
-	TArray<FRTSUnitData> Members;
-	const auto AddMember = [&Members, &GroupKey](FRTSUnitData Data)
-	{
-		if (GroupKey.IsEmpty() || GetSelectionUnitGroupKey(Data) == GroupKey) Members.Add(MoveTemp(Data));
-	};
-	for (AActor* Actor : SelectedActors) AddMember(CreateUnitDataFromActor(Actor));
-	for (const FEntityHandle& Entity : SelectedEntities) AddMember(CreateUnitDataFromEntity(Entity));
-	return Members;
+    const auto Sources = CommandGroups;
+    TArray<FRTSUnitData> Members;
+    for (const auto& Source : Sources)
+    {
+        if (!GroupKey.IsEmpty() && Source->ActiveGroupKey != GroupKey) continue;
+        for (const FEntityHandle& Entity : *Source->CommandEntities) Members.Add(CreateUnitDataFromEntity(Entity));
+    }
+    return Members;
 }
 
 void URTSSelectionSubsystem::AddOrUpdateSummaryGroup(TMap<FString, FRTSUnitData>& GroupMap, const FRTSUnitData& Data)
@@ -1487,8 +1388,10 @@ FRTSExternalBuildPlacementValidator& URTSSelectionSubsystem::OnValidateBuildPlac
 
 void URTSSelectionSubsystem::RequestSelectionRefresh()
 {
-	OnSelectionChanged.Broadcast(BuildSelectionView());
-	BroadcastControlGroupsView();
+    const FRTSSelectionView View = BuildSelectionView();
+    RebuildCommandIndex(IndexedButtons);
+    OnSelectionChanged.Broadcast(View);
+    BroadcastControlGroupsView();
 }
 
 void URTSSelectionSubsystem::BroadcastSelectionViewAndGrid(const FRTSSelectionView& View)
@@ -1521,7 +1424,8 @@ void URTSSelectionSubsystem::BroadcastSelectionViewAndGrid(const FRTSSelectionVi
 
 		if (NewGrid)
 		{
-			OnCommandNavigationRequested.Broadcast(NewGrid);
+			 ActiveCommandGrid = NewGrid;
+			            CommandGroupIndex.Reset();  RebuildCommandIndex(NewGrid ? NewGrid->GetAllButtons() : TArray<URTSCommandButton*>()); OnCommandNavigationRequested.Broadcast(NewGrid);
 			UE_LOG(LogORTSSelection, Log, TEXT("Selection: Grid sync ActiveKey=%s Grid=>%s"),
 				*ActiveKey, *NewGrid->GetName());
 			return;
@@ -1536,7 +1440,8 @@ void URTSSelectionSubsystem::BroadcastSelectionViewAndGrid(const FRTSSelectionVi
 
 		if (bMassProtocolHandledGrid)
 		{
-			OnCommandNavigationRequested.Broadcast(NewGrid);
+			 ActiveCommandGrid = NewGrid;
+			            CommandGroupIndex.Reset( ); RebuildCommandIndex(NewGrid ? NewGrid->GetAllButtons() : TArray<URTSCommandButton*>() ); OnCommandNavigationRequested.Broadcast(NewGrid);
 			UE_LOG(LogORTSSelection, Log, TEXT("Selection: Grid sync ActiveKey=%s Grid=>%s"),
 				*ActiveKey, NewGrid ? *NewGrid->GetName() : TEXT("NULL"));
 			return;
@@ -1549,7 +1454,8 @@ void URTSSelectionSubsystem::BroadcastSelectionViewAndGrid(const FRTSSelectionVi
         NewGrid = DefaultEntityGrid.LoadSynchronous();
     }
 
-    OnCommandNavigationRequested.Broadcast(NewGrid);
+     ActiveCommandGrid = NewGrid;
+                CommandGroupIndex.Reset();  RebuildCommandIndex(NewGrid ? NewGrid->GetAllButtons() : TArray<URTSCommandButton*>()); OnCommandNavigationRequested.Broadcast(NewGrid);
     UE_LOG(LogORTSSelection, Log, TEXT("Selection: Grid sync ActiveKey=%s Grid=>%s"),
         *ActiveKey, NewGrid ? *NewGrid->GetName() : TEXT("NULL"));
 }
@@ -1646,31 +1552,8 @@ bool URTSSelectionSubsystem::ResolveMassProtocolCommandGrid(const FString& Activ
 
 URTSCommandButton* URTSSelectionSubsystem::FindCommandButton(FGameplayTag CommandTag)
 {
-	if (!CommandTag.IsValid()) return nullptr;
-	const auto FindInGrid = [CommandTag](URTSCommandGridAsset* Grid) -> URTSCommandButton*
-	{
-		if (Grid)
-			for (URTSCommandButton* Button : Grid->GetAllButtons())
-				if (Button && Button->CommandTag == CommandTag) return Button;
-		return nullptr;
-	};
-	for (const auto& Entry : MassProtocolGridCache)
-		if (URTSCommandButton* Button = FindInGrid(Entry.Value)) return Button;
-	const URTSInputPanelSettings* Settings = RTSUnitTypeProtocol::GetSettings();
-	if (!Settings) return nullptr;
-	for (const FRTSCommandLoadoutDefinition& Loadout : Settings->CommandLoadouts)
-	{
-		const bool bContainsCommand = Loadout.CommandSlots.ContainsByPredicate(
-			[CommandTag](const FRTSMassUnitCommandSlotDefinition& Slot)
-			{
-				return Slot.CommandTag == CommandTag
-					|| (!Slot.CommandTag.IsValid() && Slot.CommandTagName == CommandTag.GetTagName());
-			});
-		if (bContainsCommand || !Loadout.CommandGrid.IsNull())
-			if (URTSCommandButton* Button = FindInGrid(ResolveCommandLoadoutGrid(Settings, Loadout)))
-				return Button;
-	}
-	return nullptr;
+	return CommandDefinitions.FindRef ( CommandTag) ;
+		
 }
 
 URTSCommandGridAsset* URTSSelectionSubsystem::ResolveCommandLoadoutGrid(
@@ -1718,7 +1601,7 @@ URTSCommandGridAsset* URTSSelectionSubsystem::ResolveCommandLoadoutGrid(
 	const FName GridName(*FString::Printf(TEXT("CommandLoadout_%s"), *Loadout.LoadoutId.ToString()));
 	URTSCommandGridAsset* TransientGrid = NewObject<URTSCommandGridAsset>(this, GridName);
 
-	// Cache before resolving child/parent menus so cyclic navigation (parent <-> child) is safe.
+	// Cache this panel; submenu commands retain only their target loadout IDs until opened.
 	MassProtocolGridCache.Add(Loadout.LoadoutId, TransientGrid);
 
 	if (Loadout.bIncludeDefaultUnitCommands)
@@ -1744,21 +1627,13 @@ URTSCommandGridAsset* URTSSelectionSubsystem::ResolveCommandLoadoutGrid(
 		URTSCommandButton* Button = nullptr;
 		if (!Slot.SubMenuLoadoutId.IsNone())
 		{
-			const FRTSCommandLoadoutDefinition* TargetLoadout = FindCommandLoadoutById(Settings, Slot.SubMenuLoadoutId);
-			URTSCommandGridAsset* TargetGrid = TargetLoadout
-				? ResolveCommandLoadoutGrid(Settings, *TargetLoadout)
-				: nullptr;
-
-			if (!TargetGrid)
-			{
-				UE_LOG(LogORTSSelection, Warning,
-					TEXT("Selection: Command loadout submenu '%s' could not be resolved."),
-					*Slot.SubMenuLoadoutId.ToString());
+			if (! FindCommandLoadoutById(Settings, Slot.SubMenuLoadoutId))
+				
 				return;
-			}
+			
 
 			URTSCmd_SubMenu* SubMenuButton = NewObject<URTSCmd_SubMenu>(TransientGrid);
-			SubMenuButton->TargetGrid = TargetGrid;
+			SubMenuButton->TargetLoadoutId = Slot.SubMenuLoadoutId;
 			Button = SubMenuButton;
 		}
 		else
@@ -2550,13 +2425,13 @@ int32 URTSSelectionSubsystem::CountUnitsByQuery(const FRTSSelectionQuery& Query)
 
 void URTSSelectionSubsystem::CycleGroup()
 {
-	if (AvailableGroupKeys.Num() <= 1) return;
-
-	CurrentGroupIndex++;
-	if (CurrentGroupIndex >= AvailableGroupKeys.Num()) CurrentGroupIndex = 0;
-
-	const FRTSSelectionView View = BuildSelectionView();
-	BroadcastSelectionViewAndGrid(View);
+    if (AvailableGroupKeys.Num() <= 1) return;
+    CurrentGroupIndex = (CurrentGroupIndex + 1) % AvailableGroupKeys.Num();
+    CurrentSelectionView.ActiveGroupKey = AvailableGroupKeys[CurrentGroupIndex];
+    ActiveCommandGroupIndex = CommandGroups.IndexOfByPredicate([this](const auto& Group)
+    { return Group->ActiveGroupKey == CurrentSelectionView.ActiveGroupKey; });
+    CommandGroupIndex.Reset();
+    BroadcastSelectionViewAndGrid(CurrentSelectionView);
 }
 
 void URTSSelectionSubsystem::RemoveUnit(const FRTSUnitData& UnitData)
@@ -2734,50 +2609,12 @@ FRTSUnitData URTSSelectionSubsystem::CreateUnitDataFromEntity(const FEntityHandl
 
 void URTSSelectionSubsystem::IssueCommand(FGameplayTag CommandTag)
 {
-    UE_LOG(LogTemp, Log, TEXT("RTSSelectionSubsystem: Command %s Issued to Current Selection."), *CommandTag.ToString());
-	const bool bHadSelection = !SelectedEntities.IsEmpty() || !SelectedActors.IsEmpty();
-
-    if (SelectedEntities.Num() > 0)
-    {
-		bool bHandledByExternalMassSystem = false;
-		const FRTSSelectionView View = BuildSelectionView();
-		OnHandleMassInstantCommand().Broadcast(this, CommandTag, View, bHandledByExternalMassSystem);
-
-        if (ULocalPlayer* LP = GetLocalPlayer())
+    if (URTSCommandButton* Command = FindCommandButton(CommandTag);
+            Command && Command->TargetType == ERTSCommandTargetType::Instant)
         {
-            if (!bHandledByExternalMassSystem)
-            {
-                if (URTSCommandSubsystem* SignalHub = LP->GetSubsystem<URTSCommandSubsystem>())
-                {
-                    SignalHub->IssueCommand(CommandTag, nullptr);
-                }
-            }
+            Command->Execute();
         }
-    }
-
-	for (AActor* Actor : SelectedActors)
-	{
-		if (Actor && Actor->Implements<URTSCommandInterface>())
-		{
-			IRTSCommandInterface::Execute_ExecuteCommand(Actor, CommandTag);
-			if (ClearsTaskVisualization(CommandTag))
-			{
-				if (URTSSelectable* Selectable = Actor->FindComponentByClass<URTSSelectable>())
-				{
-					Selectable->ClearCurrentTaskVisualization();
-				}
-			}
-		}
-	}
-
-	if (bHadSelection)
-	{
-		OnCommandFeedbackIssued.Broadcast(
-			CommandTag,
-			FVector::ZeroVector,
-			false,
-			false);
-	}
+				
 }
 
 void URTSSelectionSubsystem::IssueCommandWithLocation(
@@ -2786,64 +2623,7 @@ void URTSSelectionSubsystem::IssueCommandWithLocation(
 	bool bQueue,
 	bool bForceStrategicNavigation)
 {
-    UE_LOG(LogTemp, Log, TEXT("RTSSelectionSubsystem: Command %s Issued with Location %s (Queue=%d)"),
-		*CommandTag.ToString(), *Location.ToString(), bQueue);
-	const bool bHadSelection = !SelectedEntities.IsEmpty() || !SelectedActors.IsEmpty();
-
-    if (SelectedEntities.Num() > 0)
-    {
-		bool bHandledByExternalMassSystem = false;
-		const bool bComposableCommand = IsComposableContextCommand(CommandTag);
-		const FRTSSelectionView View = BuildSelectionView();
-		{
-			// Optional systems (for example production rally points) may consume their
-			// compatible slice without hiding the rest of a mixed selection.
-			TGuardValue<bool> ExposeAllSelectedGuard(
-				bExposeAllSelectedMassForComposableCommand,
-				bComposableCommand);
-			OnHandleMassLocationCommand().Broadcast(
-				this,
-				CommandTag,
-				Location,
-				View,
-				bHandledByExternalMassSystem);
-		}
-
-        if (ULocalPlayer* LP = GetLocalPlayer())
-        {
-            if (!bHandledByExternalMassSystem || bComposableCommand)
-            {
-                if (URTSCommandSubsystem* SignalHub = LP->GetSubsystem<URTSCommandSubsystem>())
-                {
-                    SignalHub->IssueCommandWithLocation(
-						CommandTag,
-						Location,
-						bQueue,
-						bForceStrategicNavigation);
-                }
-            }
-        }
-    }
-
-	for (AActor* Actor : SelectedActors)
-	{
-		if (Actor && Actor->Implements<URTSCommandInterface>())
-		{
-			IRTSCommandInterface::Execute_ExecuteCommandWithLocation(Actor, CommandTag, Location);
-			if (IsComposableContextCommand(CommandTag))
-			{
-				if (URTSSelectable* Selectable = Actor->FindComponentByClass<URTSSelectable>())
-				{
-					Selectable->SetCurrentTaskVisualization(CommandTag, Location);
-				}
-			}
-		}
-	}
-
-	if (bHadSelection)
-	{
-		OnCommandFeedbackIssued.Broadcast(CommandTag, Location, true, bQueue);
-	}
+    SubmitCommandContext(CommandTag, TOptional<bool>(bQueue), &Location, FEntityHandle(), bForceStrategicNavigation);
 }
 
 void URTSSelectionSubsystem::IssueCommandWithTarget(FGameplayTag CommandTag, const FEntityHandle& TargetEntity)
@@ -2862,49 +2642,11 @@ FString URTSSelectionSubsystem::GetActiveGroupKey() const
 	return FString();
 }
 
-TArray<FEntityHandle> URTSSelectionSubsystem::GetActiveMassEntities() const
+ const TArray<FEntityHandle>  & URTSSelectionSubsystem::GetActiveMassEntities() const
 {
-	if (bExposeAllSelectedMassForComposableCommand)
-	{
-		return SelectedEntities;
-	}
-
-	const FString ActiveKey = GetActiveGroupKey();
-	if (ActiveKey.IsEmpty())
-	{
-		return SelectedEntities;
-	}
-
-	TArray<FEntityHandle> Result;
-	for (const FEntityHandle& Handle : SelectedEntities)
-	{
-		FRTSUnitData Data = CreateUnitDataFromEntity(Handle);
-		if (GetSelectionUnitGroupKey(Data) == ActiveKey)
-		{
-			Result.Add(Handle);
-		}
-	}
-
-	if (Result.Num() > 0)
-	{
-		return Result;
-	}
-
-	// A mixed selection can expose an Actor group (for example a building)
-	// alongside Mass unit groups. When that Actor group is active, returning all
-	// selected Mass entities would make a command intended for the building also
-	// move the army. An active Actor group deliberately has no active Mass units.
-	for (AActor* Actor : SelectedActors)
-	{
-		if (Actor && GetActorGroupKey(Actor) == ActiveKey)
-		{
-			return {};
-		}
-	}
-
-	// Keep the legacy fallback only for stale/malformed group keys so an ordinary
-	// Mass-only selection is not left without a command target.
-	return SelectedEntities;
+	
+		return  ActiveCommandGroupIndex != INDEX_NONE ? *CommandGroups[ActiveCommandGroupIndex]->CommandEntities : SelectedEntities;
+	
 }
 
 UObject* URTSSelectionSubsystem::GetActiveCommandContext() const
@@ -2935,41 +2677,224 @@ AActor* URTSSelectionSubsystem::GetActiveActor() const
 
 void URTSSelectionSubsystem::IssueCommandWithEntityTarget(FGameplayTag CommandTag, const FEntityHandle& TargetEntity)
 {
-	if (!UMassAPIFuncLib::IsValid(this, TargetEntity))
-	{
-		return;
-	}
-
-	const bool bComposableCommand = IsComposableContextCommand(CommandTag);
-	const FRTSSelectionView View = BuildSelectionView();
-	 bool bHandledByExternalMassSystem = false;
-	    {
-	        TGuardValue<bool> ExposeAllSelectedGuard(
-	            bExposeAllSelectedMassForComposableCommand, bComposableCommand);
-	        OnHandleMassTargetCommand().Broadcast(
-	            this, CommandTag, TargetEntity, View, bHandledByExternalMassSystem);
-	    }
-	    if (!bHandledByExternalMassSystem || bComposableCommand)
-	    {
-	        if (ULocalPlayer* LocalPlayer = GetLocalPlayer())
-	        {
-	            if (URTSCommandSubsystem* SignalHub = LocalPlayer->GetSubsystem<URTSCommandSubsystem>())
-	            {
-	                SignalHub->IssueCommandWithEntityTarget(CommandTag, TargetEntity);
-	            }
-	        }
-	    } FVector TargetLocation = FVector::ZeroVector;
-	FVector PreviousLocation = FVector::ZeroVector;
-	FVector InitialLocation = FVector::ZeroVector;
-	UMassBattleFuncLib::GetAgentLocation(
-		this, TargetEntity, TargetLocation, PreviousLocation, InitialLocation);
-
+	URTSCommandButton* Command = FindCommandButton(CommandTag);
+	    if (!Command) return;
 	
-
-	OnCommandFeedbackIssued.Broadcast(CommandTag, TargetLocation, true, false);
+	    const ERTSCommandTargetType Type = Command->TargetType;
+	    const bool bMatches = TargetEntity.IsSet()
+	        ? Type == ERTSCommandTargetType::TargetActor || Type == ERTSCommandTargetType::LocationOrTarget
+	        : Type == ERTSCommandTargetType::Instant;
+	    if (bMatches) Command->Execute(TargetEntity);
+	            
 }
 
-FRTSSelectionView URTSSelectionSubsystem::GetSelectionView()
+ const FRTSSelectionView  & URTSSelectionSubsystem::GetSelectionView()
 {
-	return BuildSelectionView();
+	return CurrentSelectionView;
 }
+
+void URTSSelectionSubsystem::NotifyCommandProgressChanged(UObject* ProgressProvider, const FEntityHandle& Entity,
+    FName SourceId, FGuid ResolvedId, bool bCancelled)
+{
+    TArray<FRTSTimedCommandInstance> Items;
+    IRTSCommandProgressProvider::Execute_GetCommandProgressItems(ProgressProvider, Items, SourceId);
+    const FRTSTimedCommandInstance* First = Items.FindByPredicate(
+        [](const FRTSTimedCommandInstance& Item) { return Item.State != ERTSTimedCommandState::Queued; });
+
+    UWorld* World = GetWorld();
+    UMassEntitySubsystem* Mass = World ? World->GetSubsystem<UMassEntitySubsystem>() : nullptr;
+    FMassEntityManager* Manager = Mass ? &Mass->GetMutableEntityManager() : nullptr;
+    const FMassEntityHandle Handle = static_cast<FMassEntityHandle>(Entity);
+    const FVisualizing* Visual = Manager && Manager->IsEntityValid(Handle)
+        ? Manager->GetFragmentDataPtr<FVisualizing>(Handle) : nullptr;
+    AMassBattleAgentRenderer* Renderer = Visual ? Cast<AMassBattleAgentRenderer>(Visual->RendererActor) : nullptr;
+    FAgentRenderBatchData* Batch = Renderer ? Renderer->SpawnedRenderBatches.Find(Visual->RenderBatchId) : nullptr;
+    if (Batch && Batch->SpawnedNiagaraSystem && Visual->InstanceId >= 0)
+    {
+        FVector4 Progress(0, 0, 0, 0);
+        if (First)
+        {
+            const double CurrentTime = IRTSCommandProgressProvider::Execute_GetCommandProgressTimeSeconds(ProgressProvider);
+                        const double Duration = First->EndTimeSeconds - First->BeginTimeSeconds;
+                        const double Rate = First->State == ERTSTimedCommandState::Active && Duration > 0.0 ? 1.0 / Duration : 0.0;
+                        Progress = FVector4(World->GetTimeSeconds(), Rate, First->GetProgress01AtTime(CurrentTime), Visual->InstanceId + 1);
+        }
+        UNiagaraDataInterfaceArrayFunctionLibrary::SetNiagaraArrayVector4Value(
+            Batch->SpawnedNiagaraSystem, TEXT("User.CommandProgressArray"), Visual->InstanceId, Progress, true);
+    }
+
+    NotifyCommandProgressChanged(ProgressProvider, SourceId, ResolvedId, bCancelled);
+}
+
+
+
+void URTSSelectionSubsystem::SubmitCommandContext(FGameplayTag CommandTag ,
+    TOptional<bool> QueueOverride ,
+    const FVector* Location, FEntityHandle TargetEntity, bool  bForceStrategicNavigation)
+{
+    const auto Sources = GetCommandGroups(CommandTag);
+    if (Sources.IsEmpty()) return;
+    
+    bool bQueue = QueueOverride.Get(false);
+    if (!QueueOverride.IsSet())
+    {
+        const APlayerController* Controller = GetLocalPlayer()->GetPlayerController(GetWorld());
+        bQueue = Controller && (Controller->IsInputKeyDown(EKeys::LeftShift) || Controller->IsInputKeyDown(EKeys::RightShift));
+    }
+    const bool bHasTarget = TargetEntity.IsSet();
+    bool bAccepted = false;
+    const ERTSMoveNavigationScale Scale = bForceStrategicNavigation
+        ? ERTSMoveNavigationScale::Strategic : ERTSMoveNavigationScale::Auto;
+    TOptional<bool> ConstructionResult;
+    if (Location && ConfirmConstructionPlacement)
+    {
+        static const FGameplayTag BuildTag = FGameplayTag::RequestGameplayTag(FName(TEXT("RTS.Command.Build")), false);
+        if (CommandTag.MatchesTag(BuildTag))
+        {
+            ConstructionResult = ConfirmConstructionPlacement(this, CommandTag, *Location, Sources, bQueue);
+        }
+    }
+    if (ConstructionResult.IsSet())
+    {
+        bAccepted = ConstructionResult.GetValue();
+    }
+    else if (Sources.Num() == 1)
+    {
+        bAccepted = URTSCommandSubsystem::IssueCommandForEntities(
+            this, CommandTag, *Sources[0]->CommandEntities, Location, TargetEntity, bQueue, Scale);
+    }
+    else
+    {
+        TArray<FEntityHandle> Entities;
+        int32 Count = 0;
+        for (const auto& Source : Sources) Count += Source->CommandEntities->Num();
+        Entities.Reserve(Count);
+        for (const auto& Source : Sources) Entities.Append(*Source->CommandEntities);
+        bAccepted = URTSCommandSubsystem::IssueCommandForEntities(
+            this, CommandTag, Entities, Location, TargetEntity, bQueue, Scale);
+    }
+    if (!bAccepted) return;
+    FVector FeedbackLocation = Location ? *Location : FVector::ZeroVector;
+    if (bHasTarget)
+    {
+        FVector PreviousLocation, InitialLocation;
+        UMassBattleFuncLib::GetAgentLocation(this, TargetEntity, FeedbackLocation, PreviousLocation, InitialLocation);
+    }
+    OnCommandFeedbackIssued.Broadcast(*Sources[0], CommandTag, FeedbackLocation, Location != nullptr || bHasTarget, bQueue);
+}
+
+void URTSSelectionSubsystem::RebuildCommandIndex(const TArray<URTSCommandButton*>& PanelButtons)
+{
+    if (!CommandGroupIndex.IsEmpty() && IndexedButtons == PanelButtons) return;
+    IndexedButtons = PanelButtons;
+    CommandGroupIndex.Reset();
+    CommandDefinitions.Reset();
+    TArray<URTSCommandButton*> Buttons = ActiveCommandGrid ? ActiveCommandGrid->GetAllButtons() : TArray<URTSCommandButton*>();
+    Buttons.Append(PanelButtons);
+    const int32 ActiveIndex = ActiveCommandGroupIndex;
+    for (URTSCommandButton* Button : Buttons)
+        if (Button)
+        {
+            CommandDefinitions.Add(Button->CommandTag, Button);
+            Button->CommandSelection = this;
+        }
+    for (const auto& Pair : CommandDefinitions)
+    {
+        TArray<int32>& Groups = CommandGroupIndex.Add(Pair.Key);
+        if (ActiveIndex != INDEX_NONE) Groups.Add(ActiveIndex);
+    }
+    const URTSInputPanelSettings* Settings = RTSUnitTypeProtocol::GetSettings();
+    for (int32 Index = 0; Index < CommandGroups.Num(); ++Index)
+    {
+        if (Index == ActiveIndex) continue;
+        const FRTSUnitData& Unit = CommandGroups[Index]->SingleUnit;
+        int32 SubType = Unit.SubTypeIndex;
+        if (const auto* Protocol = ResolveMassUnitTypeProtocol(Settings, Unit.TypeKey, SubType))
+        {
+            for (const auto& Pair : CommandDefinitions)
+                if (RTSUnitTypeProtocol::ExposesCommandButton(Settings, *Protocol, Pair.Key))
+                    CommandGroupIndex.FindChecked(Pair.Key).Add(Index);
+        }
+        else if (const URTSCommandGridAsset* Grid = Unit.CommandGrid.Get())
+            for (const URTSCommandButton* Button : Grid->GetAllButtons())
+                if (Button)
+                    if (TArray<int32>* Groups = CommandGroupIndex.Find(Button->CommandTag)) Groups->Add(Index);
+    }
+}
+
+
+
+void URTSSelectionSubsystem::ExecuteCommand(URTSCommandButton* Command, const FVector* Location, FEntityHandle Target)
+{
+    if (Location) Command->Execute(*Location);
+    else Command->Execute(Target);
+}
+
+TArray<TSharedPtr<FRTSSelectionView>, TInlineAllocator<8>> URTSSelectionSubsystem::GetCommandGroups(FGameplayTag CommandTag) const
+{
+    TArray<TSharedPtr<FRTSSelectionView>, TInlineAllocator<8>> Sources;
+    if (const TArray<int32>* Indices = CommandGroupIndex.Find(CommandTag))
+        for (int32 Index : *Indices) Sources.Add(CommandGroups[Index]);
+    return Sources;
+}
+
+TArray<FName> URTSSelectionSubsystem::GetCommandSourceIds(FGameplayTag CommandTag) const
+{
+    const auto Sources = GetCommandGroups(CommandTag);
+    int32 Count = 0;
+    for (const auto& Source : Sources) Count += Source->CommandSourceIds.Num();
+    TArray<FName> Ids;
+    Ids.Reserve(Count);
+    for (const auto& Source : Sources) Ids.Append(Source->CommandSourceIds);
+    return Ids;
+}
+
+void URTSSelectionSubsystem::NotifyCommandFeedback(FGameplayTag CommandTag)
+{
+    const TArray<int32>* Indices = CommandGroupIndex.Find(CommandTag);
+    if (!Indices || Indices->IsEmpty()) return;
+    const auto Source = CommandGroups[(*Indices)[0]];
+    OnCommandFeedbackIssued.Broadcast(*Source, CommandTag, FVector::ZeroVector, false, false);
+}
+
+void URTSSelectionSubsystem::VisitCommandUnits(FGameplayTag CommandTag, TFunctionRef<bool(const FEntityHandle&)> Visit) const
+{
+    const auto Sources = GetCommandGroups(CommandTag);
+    for (const auto& Source : Sources)
+        for (const FEntityHandle& Entity : *Source->CommandEntities)
+            if (!Visit(Entity)) return;
+}
+
+void URTSSelectionSubsystem::VisitCommandUnits(FGameplayTag CommandTag, FRandomStream& Random, TFunctionRef<bool(const FEntityHandle&)> Visit) const
+{
+    const auto Sources = GetCommandGroups(CommandTag);
+    TArray<int32, TInlineAllocator<9>> Offsets{0};
+    for (const auto& Source : Sources) Offsets.Add(Offsets.Last() + Source->CommandEntities->Num());
+    TMap<int32, int32, TInlineSetAllocator<8>> Swaps;
+    int32 Remaining = Offsets.Last();
+    while (Remaining > 0)
+    {
+        const int32 Pick = Random.RandRange(0, Remaining - 1);
+        const int32* Mapped = Swaps.Find(Pick);
+        const int32 Unit = Mapped ? *Mapped : Pick;
+        const int32 Last = --Remaining;
+        const int32* MappedLast = Swaps.Find(Last);
+        const int32 LastValue = MappedLast ? *MappedLast : Last;
+        if (Pick != Last) Swaps.Add(Pick, LastValue);
+        Swaps.Remove(Last);
+        const int32 Group = static_cast<int32>(std::upper_bound(Offsets.GetData(), Offsets.GetData() + Offsets.Num(), Unit) - Offsets.GetData()) - 1;
+        if (!Visit((*Sources[Group]->CommandEntities)[Unit - Offsets[Group]])) return;
+    }
+}
+
+void URTSSelectionSubsystem::NavigateCommandLoadout(FName LoadoutId)
+{
+    const URTSInputPanelSettings* Settings = RTSUnitTypeProtocol::GetSettings();
+    if (const auto* Loadout = FindCommandLoadoutById(Settings, LoadoutId))
+        if (URTSCommandGridAsset* Grid = ResolveCommandLoadoutGrid(Settings, *Loadout))
+            GetLocalPlayer()->GetSubsystem<URTSCommandSubsystem>()->RequestNavigation(Grid, nullptr);
+}
+
+
+
+

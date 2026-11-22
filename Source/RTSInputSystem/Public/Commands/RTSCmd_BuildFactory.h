@@ -11,6 +11,12 @@
  * - Cost: 365 cash
  * - CD: 75s
  * - Auto-Cast: Yes
+ * @brief 提供工厂放置按钮的默认配置。
+ * @details 城市面板从该类型取得放置命令定义，选择器读取目标类型处理位置输入。
+ * 
+ * ```
+ * 城市面板 → 工厂命令定义 → 位置 / 放置输入
+ * ```
  */
 UCLASS()
 class RTSINPUTSYSTEM_API URTSCmd_BuildFactory : public URTSBuiltinCommandButton

@@ -1,3 +1,15 @@
+/**
+ * @file RTSMoveNavigationProvider.cpp
+ * @brief 按世界选择移动导航批次的生成方。
+ * @details BuildBatches 先清空输出并解析世界，再将同一批实体和目标交给该世界的导航提供方。无提供方时生成一个 Individual 批次。
+ * @code{.unparsed}
+ * 世界上下文 + 实体集合 + 目标
+ *                ↓
+ *           查找世界导航提供方
+ *                ├─ 已登记 → 项目生成批次
+ *                └─ 无登记 → 一个 Individual 批次
+ * @endcode
+ */
 #include "RTSMoveNavigationProvider.h"
 
 #include "Engine/Engine.h"

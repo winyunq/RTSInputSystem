@@ -19,6 +19,12 @@ class URTSCommandButtonWidget;
 /**
  * A Rich Tooltip for RTS Commands.
  * Displays Name, Description, Cost, Cooldown.
+ * @brief 显示单位或命令的工具提示内容。
+ * @details 按配置应用风格，使用费用和效果行显示相应信息。
+ * 
+ * ```
+ * 标题 / 描述 / 费用行 / 效果行 → 更新提示 → 样式化控件
+ * ```
  */
 UCLASS()
 class RTSINPUTSYSTEM_API URTSTooltipWidget : public UUserWidget

@@ -1,5 +1,19 @@
 // Copyright 2026 Winyunq. All Rights Reserved.
 
+/**
+ * @file RTSUnitTypeProtocol.cpp
+ * @brief 从兵种配置和面板配置解析可用命令。
+ * @details ExposesCommandButton 每次检查一个命令标签。已加载的面板资产直接检查按钮，槽位配置按覆盖顺序解析，待检查的子面板通过已访问集合去重。
+ * @code{.unparsed}
+ * 兵种协议 → 根面板或本地槽位
+ *               ↓
+ * 已加载面板按钮 或 逆序槽位覆盖
+ *               ↓
+ * 已登记命令命中 → true
+ *               ↓ 未命中
+ * 检查子面板与未占用的默认槽 → 结果
+ * @endcode
+ */
 #include "RTSInputPanelSettings.h"
 #include "RTSInputSystem.h"
 #include "GameplayTagsManager.h"
@@ -177,83 +191,11 @@ namespace
 			: FGameplayTag::RequestGameplayTag(Slot.CommandTagName, false);
 	}
 
-	bool GridContainsCommand(const URTSCommandGridAsset* Grid, const FGameplayTag& CommandTag)
-	{
-		if (!Grid || !CommandTag.IsValid())
-		{
-			return false;
-		}
+	
 
-		for (const URTSCommandButton* Button : Grid->GetAllButtons())
-		{
-			if (Button && Button->CommandTag.MatchesTagExact(CommandTag))
-			{
-				return true;
-			}
-		}
+	
 
-		return false;
-	}
-
-	bool IsDefaultUnitCommand(const FGameplayTag& CommandTag)
-	{
-		const FName TagName = CommandTag.GetTagName();
-		return TagName == FName(TEXT("RTS.Command.Move"))
-			|| TagName == FName(TEXT("RTS.Command.Attack"))
-			|| TagName == FName(TEXT("RTS.Command.Stop"))
-			|| TagName == FName(TEXT("RTS.Command.Hold"))
-			|| TagName == FName(TEXT("RTS.Command.Patrol"));
-	}
-
-	bool LoadoutContainsCommandRecursive(
-		const URTSInputPanelSettings* Settings,
-		FName LoadoutId,
-		const FGameplayTag& CommandTag,
-		TSet<FName>& VisitedLoadouts)
-	{
-		if (LoadoutId.IsNone() || VisitedLoadouts.Contains(LoadoutId))
-		{
-			return false;
-		}
-		VisitedLoadouts.Add(LoadoutId);
-
-		const FRTSCommandLoadoutDefinition* Loadout = FindLoadout(Settings, LoadoutId);
-		if (!Loadout)
-		{
-			return false;
-		}
-
-		if (Loadout->bIncludeDefaultUnitCommands && IsDefaultUnitCommand(CommandTag))
-		{
-			return true;
-		}
-
-		if (!Loadout->CommandGrid.IsNull()
-			&& GridContainsCommand(Loadout->CommandGrid.LoadSynchronous(), CommandTag))
-		{
-			return true;
-		}
-
-		for (const FRTSMassUnitCommandSlotDefinition& Slot : Loadout->CommandSlots)
-		{
-			if (ResolveSlotCommandTag(Slot).MatchesTagExact(CommandTag))
-			{
-				return true;
-			}
-
-			if (!Slot.SubMenuLoadoutId.IsNone()
-				&& LoadoutContainsCommandRecursive(
-					Settings,
-					Slot.SubMenuLoadoutId,
-					CommandTag,
-					VisitedLoadouts))
-			{
-				return true;
-			}
-		}
-
-		return false;
-	}
+	
 }
 
 const URTSInputPanelSettings* RTSUnitTypeProtocol::GetSettings()
@@ -376,54 +318,56 @@ bool RTSUnitTypeProtocol::ExposesCommandButton(
 	const FRTSMassUnitTypeProtocol& Protocol,
 	const FGameplayTag& CommandTag)
 {
-	if (!Settings || !CommandTag.IsValid())
-	{
-		return false;
-	}
-
-	const FName LoadoutId = ResolveCommandLoadoutId(Protocol);
-	if (!LoadoutId.IsNone())
-	{
-		TSet<FName> VisitedLoadouts;
-		if (LoadoutContainsCommandRecursive(Settings, LoadoutId, CommandTag, VisitedLoadouts))
-		{
-			return true;
-		}
-	}
-
-	if (Protocol.bUseDefaultCommandGrid && IsDefaultUnitCommand(CommandTag))
-	{
-		return true;
-	}
-
-	if (!Protocol.CommandGrid.IsNull()
-		&& GridContainsCommand(Protocol.CommandGrid.LoadSynchronous(), CommandTag))
-	{
-		return true;
-	}
-
-	for (const FRTSMassUnitCommandSlotDefinition& Slot : Protocol.CommandSlots)
-	{
-		if (ResolveSlotCommandTag(Slot).MatchesTagExact(CommandTag))
-		{
-			return true;
-		}
-
-		if (!Slot.SubMenuLoadoutId.IsNone())
-		{
-			TSet<FName> VisitedLoadouts;
-			if (LoadoutContainsCommandRecursive(
-				Settings,
-				Slot.SubMenuLoadoutId,
-				CommandTag,
-				VisitedLoadouts))
-			{
-				return true;
-			}
-		}
-	}
-
-	return false;
+	if (!Settings || !CommandTag.IsValid()) return false;
+	    static const FName DefaultNames[] = {FName(TEXT("RTS.Command.Move")), FName(TEXT("RTS.Command.Stop")),
+	        FName(TEXT("RTS.Command.Hold")), FName(TEXT("RTS.Command.Patrol")), FName(TEXT("RTS.Command.Attack"))};
+	    const auto DefaultSlot = [](const FGameplayTag& Tag) -> int32
+	    {
+	        for (int32 Index = 0; Index < static_cast<int32>(UE_ARRAY_COUNT(DefaultNames)); ++Index)
+	            if (DefaultNames[Index] == Tag.GetTagName()) return Index;
+	        return INDEX_NONE;
+	    };
+	    TArray<const FRTSCommandLoadoutDefinition*, TInlineAllocator<8>> Pending;
+	    TSet<FName> Visited;
+	    const auto Contains = [&](const TArray<FRTSMassUnitCommandSlotDefinition>& Slots, bool bDefaults,
+	        const URTSCommandGridAsset* Grid, uint32 Occupied)
+	    {
+	        if (Grid && !Grid->Buttons.IsEmpty())
+	        {
+	            for (const URTSCommandButton* Button : Grid->Buttons)
+	                if (Button && Button->CommandTag == CommandTag) return true;
+	            return false;
+	        }
+	        for (int32 Index = Slots.Num() - 1; Index >= 0; --Index)
+	        {
+	            const auto& Slot = Slots[Index];
+	            const FGameplayTag Tag = ResolveSlotCommandTag(Slot);
+	            const int32 CoreSlot = DefaultSlot(Tag);
+	            const int32 Position = CoreSlot != INDEX_NONE ? CoreSlot : Slot.SlotIndex;
+	            if (!Tag.IsValid() || Position < 0 || Position >= 15) continue;
+	            const uint32 Bit = 1u << Position;
+	            if (Occupied & Bit) continue;
+	            Occupied |= Bit;
+	            if (Tag == CommandTag) return true;
+	            if (const auto* Child = FindLoadout(Settings, Slot.SubMenuLoadoutId)) Pending.Add(Child);
+	        }
+	        const int32 Position = DefaultSlot(CommandTag);
+	        return bDefaults && Position != INDEX_NONE && !(Occupied & (1u << Position));
+	    };
+	    const auto* Root = FindLoadout(Settings, ResolveCommandLoadoutId(Protocol));
+	    if (Root) Pending.Add(Root);
+	    else if (Contains(Protocol.CommandSlots, Protocol.bUseDefaultCommandGrid, Protocol.CommandGrid.Get(), 0)) return true;
+	    while (!Pending.IsEmpty())
+	    {
+	        const auto* Loadout = Pending.Pop(EAllowShrinking::No);
+	        if (Visited.Contains(Loadout->LoadoutId)) continue;
+	        Visited.Add(Loadout->LoadoutId);
+	        uint32 Occupied = 0;
+	        if (!Loadout->BackToLoadoutId.IsNone() && Loadout->BackButtonSlotIndex >= 0 && Loadout->BackButtonSlotIndex < 15)
+	            Occupied = 1u << Loadout->BackButtonSlotIndex;
+	        if (Contains(Loadout->CommandSlots, Loadout->bIncludeDefaultUnitCommands, Loadout->CommandGrid.Get(), Occupied)) return true;
+	    }
+	    return false;
 }
 
 #if WITH_DEV_AUTOMATION_TESTS

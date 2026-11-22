@@ -55,6 +55,13 @@ private:
  *
  * This is a frontend UMG control: it wraps one child with a material-driven,
  * nine-sliced frame. It owns no game state and does not create gameplay UI.
+ * @brief 为 HUD 提供可配置的边框和内容容器。
+ * @details 从材质与切片尺寸构造画刷，将边框、填充、内边距和对齐应用到 Slate 容器。
+ * 
+ * ```
+ * 材质 + 切片 → Slate 画刷
+ * 外框 / 内框 / 填充 + 对齐 → 内容容器
+ * ```
  */
 UCLASS(BlueprintType, Blueprintable, meta = (DisplayName = "RTS Frame Box"))
 class RTSINPUTSYSTEM_API URTSFrameBox : public UContentWidget

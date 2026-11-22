@@ -409,7 +409,7 @@ bool URTSMinimapJumpWidget::TryIssueMoveCommand(const FVector& WorldLocation) co
 		MoveTag,
 		WorldLocation,
 		bQueueCommand,
-		/*bForceStrategicNavigation*/ true);
+		/*bForceStrategicNavigation*/ false);
 	return true;
 }
 

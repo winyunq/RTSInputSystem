@@ -709,6 +709,32 @@ void URTSCamera::setActiveCamera()
 	this->SetComponentTickEnabled(true);
 }
 
+void URTSCamera::setZoomLength(float Length, bool bInstant)
+{
+	this->desiredZoomLength = FMath::Clamp(Length, this->minimumZoomLength, this->maximumZoomLength);
+	const float ZoomRange = FMath::Max(this->maximumZoomLength - this->minimumZoomLength, UE_SMALL_NUMBER);
+	const float ZoomAlpha = (this->desiredZoomLength - this->minimumZoomLength) / ZoomRange;
+	this->currentMovementSpeed = FMath::Lerp(this->minMovementSpeed, this->maxMovementSpeed, ZoomAlpha);
+	if (bInstant && this->springArmComponent)
+	{
+		this->springArmComponent->TargetArmLength = this->desiredZoomLength;
+	}
+	this->SetComponentTickEnabled(true);
+	this->applyCameraStateChange();
+}
+
+void URTSCamera::setMovementBounds(const FVector& Origin, const FVector& Extents)
+{
+	this->ResolvedBoundaryOrigin = Origin;
+	this->ResolvedBoundaryExtents = Extents;
+	this->ResolvedBoundaryOverflowUU = 0.0f;
+	this->bHasResolvedBoundaryData = true;
+	FVector2D ViewportSize;
+	this->getViewportSizePixels(ViewportSize);
+	this->recalculateBoundaryReachFactors(ViewportSize);
+	this->applyCameraStateChange();
+}
+
 void URTSCamera::jumpTo(const FVector position)
 {
 	/// 执行瞬时的视变换同步，并触发视野投影点手动刷新

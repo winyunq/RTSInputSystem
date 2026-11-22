@@ -17,6 +17,13 @@
  *
  * UnitConfig intentionally uses UObject here so RTSInputSystem does not take a
  * public dependency on MassBattle merely to describe a command button.
+ * @brief 保存单位生产按钮使用的单位和训练配置。
+ * @details 业务侧读取单位标识、配置资产、数量、时长、出生间距及使用条件。
+ * 
+ * ```
+ * 按钮配置 → 生产单位定义
+ * 单位资产 + 数量 + 时间 + 间距 → 生产执行入口
+ * ```
  */
 UCLASS(Abstract, Blueprintable)
 class RTSINPUTSYSTEM_API URTSUnitProductionCommandButton : public URTSBuiltinCommandButton

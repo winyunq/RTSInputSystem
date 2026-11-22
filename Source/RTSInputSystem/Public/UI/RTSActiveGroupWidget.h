@@ -16,10 +16,18 @@ class UNiagaraSystem;
 class UPointLightComponent;
 class USceneCaptureComponent2D;
 class UTextureRenderTarget2D;
+class USoundConcurrency;
 
 /**
  * A standalone widget that displays the currently active sub-group (Leader/Avatar).
  * Listen to RTSSelectionSubsystem directly.
+ * @brief 显示活动组选中单位并呈现选区和发令反馈。
+ * @details 根据选区视图选择代表单位。命令反馈回调使用同一视图选择播报者。
+ * 
+ * ```
+ * 选区视图 → 活动组代表单位 → 资料 / 肖像
+ * 命令确认 → 代表单位 → 界面事件 / 本地语音
+ * ```
  */
 UCLASS(BlueprintType, Blueprintable)
 class RTSINPUTSYSTEM_API URTSActiveGroupWidget : public UUserWidget
@@ -73,8 +81,8 @@ protected:
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "RTS Selection|Portrait")
 	FRotator PortraitViewDirection = FRotator(8.0f, 0.0f, 0.0f);
 
-	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "RTS Selection|Portrait", meta = (ClampMin = "1.0", ClampMax = "3.0"))
-	float PortraitFramingPadding = 1.25f;
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "RTS Selection|Portrait", meta = (ClampMin = "1.0", ClampMax = "1.08"))
+	float PortraitFramingPadding = 1.04f;
 
 	UPROPERTY(Transient)
 	TObjectPtr<USceneCaptureComponent2D> PortraitCaptureComponent;
@@ -105,6 +113,12 @@ protected:
 	TWeakObjectPtr<UWorld> PortraitPreparedWorld;
 	FDelegateHandle PortraitActorSpawnedHandle;
 
+	/**
+	 * @brief 以选中 Mass 单位作为实时头像的采样来源。
+	 * @details 解析单位的渲染批次与实例，复用或准备头像预览组件，再用实例数据刷新预览。
+	 * @param Data 当前代表单位的 Mass 句柄及展示资料。
+	 * @return 实时头像已从当前单位建立时为 true。
+	 */
 	bool StartSelectedUnitPortrait(const FRTSUnitData& Data);
 	bool EnsurePortraitCaptureResources();
 	void PreparePortraitPreviewComponent(AMassBattleAgentRenderer* Renderer);
@@ -117,6 +131,24 @@ protected:
 	void StopLivePortrait();
 	void CapturePortraitFrame();
 	void ApplyStaticPortrait(UTexture2D* Texture);
+	/**
+	 * @brief 为一条确认反馈发送界面事件并选择播报音。
+	 * @details 单组视图直接使用代表单位，列表视图优先读取活动组的单位。先发出 OnUnitCommandAcknowledged，再尝试命令专用音，最后尝试单位通用确认音。
+	 * @param Context 收到的分组视图。
+	 * @param CommandTag 已提交的命令标签。
+	 * @note 目标坐标和两个状态参数来自统一反馈事件。此控件使用组视图和命令标签。
+	 */
+	void HandleCommandFeedback(const FRTSSelectionView& Context, FGameplayTag CommandTag, FVector, bool, bool);
+
+	UPROPERTY(Transient)
+	FRTSUnitData CommandFeedbackUnit;
+
+	UPROPERTY(Transient)
+	TObjectPtr<USoundConcurrency> CommandVoiceConcurrency;
+
+	/** Receives each player order even when the unit has no confirmation audio yet. */
+	UFUNCTION(BlueprintImplementableEvent, Category = "RTS Selection|Feedback")
+	void OnUnitCommandAcknowledged(FGameplayTag CommandTag, const FRTSUnitData& UnitData);
 	
 	// Optional: A text block for the name? (Or let GroupIcon handle it?)
 	// Let's keep it simple: It mostly wraps functionality.

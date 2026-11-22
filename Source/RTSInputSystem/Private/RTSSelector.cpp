@@ -782,13 +782,7 @@ namespace
 		return CommandTag.GetTagName() == FName(TEXT("RTS.Command.Attack"));
 	}
 
-	bool IsSelectorComposableContextCommand(const FGameplayTag& CommandTag)
-	{
-		const FName TagName = CommandTag.GetTagName();
-		return TagName == FName(TEXT("RTS.Command.Move"))
-			|| TagName == FName(TEXT("RTS.Command.Attack"))
-			|| TagName == FName(TEXT("RTS.Command.Patrol"));
-	}
+	
 
 }
 
@@ -1428,7 +1422,7 @@ void URTSSelector::RegisterControlGroupHotkeys()
 
 	for (int32 GroupIndex = 0; GroupIndex <= 9; ++GroupIndex)
 	{
-		for (const FKey Key : { NumberKeys[GroupIndex], NumpadKeys[GroupIndex] })
+        for (const FKey& Key : { NumberKeys[GroupIndex], NumpadKeys[GroupIndex] })
 		{
 			AddBinding(Key, GroupIndex, false, false, false);
 			AddBinding(Key, GroupIndex, false, true, false);
@@ -1688,22 +1682,11 @@ void URTSSelector::BeginTargeting(FGameplayTag CommandTag)
 
 void URTSSelector::BeginTargetingWithType(FGameplayTag CommandTag, ERTSCommandTargetType TargetType)
 {
-	ClearSelectableHoverPreview(false);
-	if (ShouldUseHashGridSelectionForCommand(CommandTag))
-	{
-		BeginHashGridSelection(CommandTag);
-		return;
-	}
-
-	EndHashGridSelectionPreview();
-	bIsTargeting = true;
-	PendingCommandTag = CommandTag;
-	PendingTargetType = TargetType;
-	// Optional: Change mouse cursor to crosshair here
-	if (PlayerController)
-	{
-		PlayerController->CurrentMouseCursor = EMouseCursor::Crosshairs;
-	}
+	
+	if (ULocalPlayer* Player = PlayerController ? PlayerController->GetLocalPlayer() : nullptr)
+	  if (URTSCommandButton* Command = Player->GetSubsystem<URTSSelectionSubsystem>()->FindCommandButton(CommandTag))
+	            BeginCommandTargeting( Command );
+	
 }
 
 void URTSSelector::CancelTargeting()
@@ -1715,7 +1698,7 @@ void URTSSelector::CancelTargeting()
 	}
 
 	EndHashGridSelectionPreview();
-	bIsTargeting = false;
+	bIsTargeting = false  ;
 	PendingCommandTag = FGameplayTag::EmptyTag;
 	PendingTargetType = ERTSCommandTargetType::Location;
 	if (PlayerController)
@@ -1792,7 +1775,7 @@ bool URTSSelector::CommitPendingTargetingAtWorldLocation(FVector WorldLocation)
 	}
 
 	const bool bQueueCommand = IsCommandQueueModifierDown();
-	SelectionSubsystem->IssueCommandWithLocation(PendingCommandTag, WorldLocation, bQueueCommand);
+	SelectionSubsystem->ExecuteCommand(TargetingCommandDefinition, & WorldLocation , FEntityHandle() );
 	if (!bQueueCommand)
 	{
 		CancelTargeting();
@@ -1974,7 +1957,8 @@ void URTSSelector::OnIssueCommand(const FInputActionValue& Value)
 		}
 	}
 
-	CancelTargeting(); // Right click cancels any active targeting
+	CancelTargeting(); // 普通右键结束后清理瞄准状态。
+	// 右键输入 → 瞄准中提交原命令 / 平时按命中发移动或攻击
 }
 
 void URTSSelector::OnSelectionStart(const FInputActionValue& Value)
@@ -2014,58 +1998,43 @@ void URTSSelector::OnSelectionStart(const FInputActionValue& Value)
 bool URTSSelector::IssuePendingTargetingCommand(const FHitResult& Hit)
 {
 	if (!PlayerController)
-	{
+	
 		return false;
-	}
+	
 
 	FHitResult ResolvedHit = Hit ;
-		FEntityHandle ResolvedEntityTarget ;
-	bool bHostileUnitTarget = false;
-	const bool bUnitTargetCommand =
+		FEntityHandle Target ;
+	bool bHostile = false;
+	const bool bEntityOnly =
 		PendingTargetType == ERTSCommandTargetType::TargetActor;
-	const bool bComposableCommand = IsSelectorComposableContextCommand(PendingCommandTag)
-		&& !bUnitTargetCommand;
-	if (bComposableCommand || bUnitTargetCommand
+	
+	if (bEntityOnly
 	        || PendingTargetType == ERTSCommandTargetType::LocationOrTarget)
 	{
-		if (!ResolveSmartCommandHit(ResolvedHit , ResolvedEntityTarget , bHostileUnitTarget)
-			|| (bUnitTargetCommand && !ResolvedEntityTarget.IsSet()))
-		{
+		if (!ResolveSmartCommandHit(ResolvedHit , Target , bHostile)
+			|| (bEntityOnly && !Target.IsSet()))
+		
 			return false;
-		}
+		
 	}
 	else if (!ResolvedHit.bBlockingHit)
-	{
+	
 		return false;
-	}
+	
 
-	ULocalPlayer* LocalPlayer = PlayerController->GetLocalPlayer();
-	URTSSelectionSubsystem* SelectionSubsystem = LocalPlayer
-		? LocalPlayer->GetSubsystem<URTSSelectionSubsystem>()
+	ULocalPlayer* Player = PlayerController->GetLocalPlayer();
+	URTSSelectionSubsystem* Selection = Player
+		? Player->GetSubsystem<URTSSelectionSubsystem>()
 		: nullptr;
-	if (!SelectionSubsystem)
-	{
+	if (!Selection)
+	
 		return false;
-	}
+	
 
 	
-		 if (ResolvedEntityTarget.IsSet( )
-		         && (bUnitTargetCommand
-		             || (PendingTargetType == ERTSCommandTargetType::LocationOrTarget
-		                 && (bHostileUnitTarget || !bComposableCommand)) ))
-				{
-					SelectionSubsystem->IssueCommandWithEntityTarget(PendingCommandTag, ResolvedEntityTarget);
-					 return true;
-	}
-
-	if (PendingTargetType == ERTSCommandTargetType::Instant)
-	{
-		SelectionSubsystem->IssueCommand(PendingCommandTag);
-		return true;
-	}
-
-	
-	SelectionSubsystem->IssueCommandWithLocation(PendingCommandTag, ResolvedHit.Location, IsCommandQueueModifierDown());
+		 if (Target.IsSet( )
+		         ) Selection->ExecuteCommand (TargetingCommandDefinition, nullptr , Target);
+					 else Selection->ExecuteCommand (TargetingCommandDefinition, & ResolvedHit.Location , FEntityHandle() );
 	return true;
 }
 
@@ -2132,95 +2101,17 @@ void URTSSelector::ShowGroundCommandFeedback(
 	const bool bAttackGround)
 {
 	const URTSInputPanelSettings* Settings = GetDefault<URTSInputPanelSettings>();
-	UWorld* World = GetWorld();
-	if (!Settings || !Settings->bEnableMoveCommandFeedback || !World)
-	{
-		return;
-	}
-
-	if (CVarRTSGroundCommandPulse.GetValueOnGameThread() != 0)
-	{
-		ULineBatchComponent* LineBatcher =
-			World->GetLineBatcher(UWorld::ELineBatcherType::WorldPersistent);
-		if (!LineBatcher)
-		{
-			return;
-		}
-		const int32 MaxPulses = FMath::Clamp(
-			Settings->MaxMoveCommandFeedbackPulses,
-			1,
-			32);
-		while (MoveCommandFeedbackBatchIds.Num() >= MaxPulses)
-		{
-			LineBatcher->ClearBatch(MoveCommandFeedbackBatchIds[0]);
-			MoveCommandFeedbackBatchIds.RemoveAt(
-				0, 1, EAllowShrinking::No);
-		}
-
-		const uint32 BatchId = GetMoveCommandFeedbackLineBatchId(
-			this,
-			++MoveCommandFeedbackSequence);
-		MoveCommandFeedbackBatchIds.Add(BatchId);
-		const TArray<FVector> GroundRingPoints = BuildGroundConformingRing(
-			Location,
-			FMath::Max(1.0f, Settings->MoveArrivalRange),
-			FMath::Clamp(Settings->MoveCommandFeedbackSegments, 12, 64));
-		FLinearColor Color = bAttackGround
-			? Settings->AttackGroundFeedbackColor
-			: Settings->MoveCommandFeedbackColor;
-		const float Duration = FMath::Max(
-			0.1f,
-			Settings->MoveCommandFeedbackDuration);
-		const float PulseThickness = FMath::Clamp(
-			Settings->MoveCommandFeedbackLineThickness,
-			0.5f,
-			12.0f);
-		TArray<FBatchedLine> Lines;
-		Lines.Reserve(GroundRingPoints.Num() + 2);
-		for (int32 SegmentIndex = 1;
-			SegmentIndex < GroundRingPoints.Num();
-			++SegmentIndex)
-		{
-			Lines.Emplace(
-				GroundRingPoints[SegmentIndex - 1],
-				GroundRingPoints[SegmentIndex],
-				Color,
-				Duration,
-				PulseThickness,
-				1,
-				BatchId);
-		}
-
-		if (bAttackGround)
-		{
-			const float CrossRadius =
-				FMath::Max(1.0f, Settings->MoveArrivalRange) * 0.55f;
-			const FVector Center =
-				Location + FVector(0.0f, 0.0f, 6.0f);
-			const FVector CrossOffsetA(CrossRadius, CrossRadius, 0.0f);
-			const FVector CrossOffsetB(CrossRadius, -CrossRadius, 0.0f);
-			Lines.Emplace(
-				Center - CrossOffsetA,
-				Center + CrossOffsetA,
-				Color,
-				Duration,
-				PulseThickness,
-				1,
-				BatchId);
-			Lines.Emplace(
-				Center - CrossOffsetB,
-				Center + CrossOffsetB,
-				Color,
-				Duration,
-				PulseThickness,
-				1,
-				BatchId);
-		}
-		if (!Lines.IsEmpty())
-		{
-			LineBatcher->DrawLines(Lines);
-		}
-	}
+		if (!Settings->bEnableMoveCommandFeedback) return;
+		FFxConfig Feedback;
+		Feedback.bLockstepNetworked = false;
+		Feedback.SubType_Index = -1;
+		Feedback.SoftNiagaraAsset = TSoftObjectPtr<UNiagaraSystem>(FSoftObjectPath(
+			bAttackGround
+				? TEXT("/Game/Unit/Shared/FX/Command/NS_CommandFeedback_Attack_RTS.NS_CommandFeedback_Attack_RTS")
+				: TEXT("/Game/Unit/Shared/FX/Command/NS_CommandFeedback_Move_RTS.NS_CommandFeedback_Move_RTS")));
+		Feedback.Transform.SetScale3D(FVector3f(32.0f / 93.657608f));
+		Feedback.LifeSpan = 0.75f;
+		UMassBattleFuncLib::SpawnBatchedFx(this, Feedback, Location);
 }
 
 void URTSSelector::ClearMoveCommandFeedback()
@@ -2336,154 +2227,60 @@ bool URTSSelector::CacheSelectedTaskRouteAnchor(const FVector2D& ScreenPosition)
 }
 
 void URTSSelector::HandleCommandFeedbackIssued(
-	const FGameplayTag CommandTag,
+	 const FRTSSelectionView& Context, const FGameplayTag CommandTag,
 	const FVector WorldLocation,
 	const bool bHasWorldLocation,
 	const bool bQueue)
 {
-	const FName TagName = CommandTag.GetTagName();
-	const bool bClearsTaskRoute =
-		TagName == FName(TEXT("RTS.Command.Stop"))
-		|| TagName == FName(TEXT("RTS.Command.Hold"));
-	if (bClearsTaskRoute)
-	{
-		SelectedTaskRoutes.Reset();
-		RedrawSelectedTaskRoutes();
-		return;
-	}
-
-	const bool bMovePath = IsMovePathCommand(CommandTag);
-	const bool bAttackPath = IsAttackPathCommand(CommandTag);
-	if (!bHasWorldLocation || (!bMovePath && !bAttackPath))
-	{
-		return;
-	}
-
-	ShowGroundCommandFeedback(WorldLocation, bAttackPath);
-
-	const URTSInputPanelSettings* Settings = GetDefault<URTSInputPanelSettings>();
-	if (!Settings
-		|| !Settings->bEnableSelectedPathPreview
-		|| CVarRTSSelectedTaskLineFeedback.GetValueOnGameThread() == 0)
-	{
-		SelectedTaskRoutes.Reset();
-		RedrawSelectedTaskRoutes();
-		return;
-	}
-
-	const FVector RouteStart =
-		bQueue && !SelectedTaskRoutes.IsEmpty()
-			? SelectedTaskRoutes.Last().End
-			: WorldLocation;
-	if (!bQueue)
-	{
-		SelectedTaskRoutes.Reset();
-	}
-
-	FSelectedTaskRoute& Route =
-		SelectedTaskRoutes.AddDefaulted_GetRef();
-	Route.Start = RouteStart;
-	Route.End = WorldLocation;
-	Route.GroundRingPoints = BuildGroundConformingRing(
-		WorldLocation,
-		FMath::Max(1.0f, Settings->MoveArrivalRange),
-		FMath::Clamp(Settings->MoveCommandFeedbackSegments, 12, 64));
-	Route.bAttackMove = bAttackPath;
-
-	const int32 MaxLines = FMath::Clamp(
-		Settings->MaxSelectedTaskRouteLines,
-		1,
-		32);
-	if (SelectedTaskRoutes.Num() > MaxLines)
-	{
-		SelectedTaskRoutes.RemoveAt(
-			0,
-			SelectedTaskRoutes.Num() - MaxLines,
-			EAllowShrinking::No);
-	}
-
-	RedrawSelectedTaskRoutes();
+	if (!bHasWorldLocation)
+		{
+			ClearSelectedPathPreview();
+			return;
+		}
+		const URTSInputPanelSettings* Settings = GetDefault<URTSInputPanelSettings>();
+		const bool bAttackGround = CommandTag.MatchesTag(
+			FGameplayTag::RequestGameplayTag(FName(TEXT("RTS.Command.Attack")), false));
+		ShowGroundCommandFeedback(WorldLocation, bAttackGround);
+		if (!bQueue)
+		{
+			ClearSelectedPathPreview();
+			SelectedTaskRouteAnchor = WorldLocation;
+			bHasSelectedTaskRouteAnchor = true;
+			return;
+		}
+		if (!Settings->bEnableSelectedPathPreview
+			|| !PlayerController || !PlayerController->GetLocalPlayer())
+		{
+			return;
+		}
+		if (!bHasSelectedTaskRouteAnchor)
+		{
+			
+			if (Context.CommandEntities->IsEmpty()) return;
+			SelectedTaskRouteAnchor = UMassBattleFuncLib::GetAgentsAverageLocation(
+				this,  * Context.CommandEntities);
+			bHasSelectedTaskRouteAnchor = true;
+		}
+		if (UWorld* World = GetWorld())
+		{
+			if (ULineBatchComponent* Lines =
+				World->GetLineBatcher(UWorld::ELineBatcherType::WorldPersistent))
+			{
+				Lines->DrawLine(
+					SelectedTaskRouteAnchor + FVector(0.0, 0.0, 4.0),
+					WorldLocation + FVector(0.0, 0.0, 4.0),
+					bAttackGround ? Settings->SelectedAttackMovePathColor : Settings->SelectedMovePathColor,
+					SDPG_World, Settings->SelectedPathLineThickness, -1.0f,
+					GetSelectedPathLineBatchId(this));
+				bSelectedPathPreviewVisible = true;
+			}
+		}
+		SelectedTaskRouteAnchor = WorldLocation;
 }
 
 void URTSSelector::RedrawSelectedTaskRoutes()
 {
-	SCOPE_CYCLE_COUNTER(STAT_RTSSelectedTaskLineFeedback);
-
-	UWorld* World = GetWorld();
-	ULineBatchComponent* LineBatcher = World
-		? World->GetLineBatcher(UWorld::ELineBatcherType::WorldPersistent)
-		: nullptr;
-	if (!LineBatcher)
-	{
-		bSelectedPathPreviewVisible = false;
-		return;
-	}
-
-	const uint32 BatchId = GetSelectedPathLineBatchId(this);
-	LineBatcher->ClearBatch(BatchId);
-
-	const URTSInputPanelSettings* Settings = GetDefault<URTSInputPanelSettings>();
-	if (!Settings
-		|| !Settings->bEnableSelectedPathPreview
-		|| CVarRTSSelectedTaskLineFeedback.GetValueOnGameThread() == 0
-		|| SelectedTaskRoutes.IsEmpty())
-	{
-		bSelectedPathPreviewVisible = false;
-		return;
-	}
-
-	const int32 MaxLines = FMath::Clamp(
-		Settings->MaxSelectedTaskRouteLines,
-		1,
-		32);
-	const int32 FirstRouteIndex =
-		FMath::Max(0, SelectedTaskRoutes.Num() - MaxLines);
-	const float Thickness = FMath::Clamp(
-		Settings->SelectedPathLineThickness,
-		0.1f,
-		12.0f);
-
-	TArray<FBatchedLine> Lines;
-	Lines.Reserve(
-		(SelectedTaskRoutes.Num() - FirstRouteIndex)
-		* FMath::Clamp(Settings->MoveCommandFeedbackSegments, 12, 64));
-	for (int32 RouteIndex = FirstRouteIndex;
-		RouteIndex < SelectedTaskRoutes.Num();
-		++RouteIndex)
-	{
-		const FSelectedTaskRoute& Route = SelectedTaskRoutes[RouteIndex];
-		FLinearColor Color = Route.bAttackMove
-			? Settings->SelectedAttackMovePathColor
-			: Settings->SelectedMovePathColor;
-		const float QueueAlpha =
-			SelectedTaskRoutes.Num() <= 1
-				? 1.0f
-				: FMath::Lerp(
-					0.52f,
-					1.0f,
-					static_cast<float>(RouteIndex - FirstRouteIndex + 1)
-						/ (SelectedTaskRoutes.Num() - FirstRouteIndex));
-		Color.A *= QueueAlpha;
-		for (int32 PointIndex = 1;
-			PointIndex < Route.GroundRingPoints.Num();
-			++PointIndex)
-		{
-			Lines.Emplace(
-				Route.GroundRingPoints[PointIndex - 1],
-				Route.GroundRingPoints[PointIndex],
-				Color,
-				-1.0f,
-				Thickness,
-				1,
-				BatchId);
-		}
-	}
-
-	if (!Lines.IsEmpty())
-	{
-		LineBatcher->DrawLines(Lines);
-	}
-	bSelectedPathPreviewVisible = !Lines.IsEmpty();
+	return;
 }
 
 void URTSSelector::ClearSelectedPathPreview()
@@ -2598,7 +2395,7 @@ void URTSSelector::CancelHashGridSelection()
 	const FGameplayTag CancelledCommandTag = PendingCommandTag;
 	bIsHashGridSelecting = false;
 	EndHashGridSelectionPreview();
-	bIsTargeting = false;
+	bIsTargeting = false  ;
 	PendingCommandTag = FGameplayTag::EmptyTag;
 	PendingTargetType = ERTSCommandTargetType::Location;
 	ActiveHashGridFootprintCells = FVector2D::ZeroVector;
@@ -2874,104 +2671,17 @@ void URTSSelector::BeginHashGridSelectionInternal(
 	float CellSize,
 	UMassBattleAgentConfigDataAsset* PreviewUnit)
 {
-	ClearSelectableHoverPreview(false);
-	EndHashGridSelectionPreview();
+	
 
-	bIsTargeting = true;
-	bIsHashGridSelecting = true;
-	PendingCommandTag = CommandTag;
-	PendingTargetType = ERTSCommandTargetType::Location;
-	ActiveHashGridFootprintCells = FVector2D(
-		FMath::Max(1.0f, FootprintCells.X),
-		FMath::Max(1.0f, FootprintCells.Y)
+	if (ULocalPlayer* Player = PlayerController ? PlayerController->GetLocalPlayer() : nullptr)
+	
+		if (URTSCommandButton* Command = Player->GetSubsystem<URTSSelectionSubsystem>()->FindCommandButton(CommandTag))
+	BeginHashGridSelectionForContext(
+		CommandTag, FootprintCells,
+		CellSize, PreviewUnit,
+		Command
 	);
-	ActiveHashGridCellSize = FMath::Max(1.0f, CellSize);
-
-	if (PlayerController)
-	{
-		PlayerController->CurrentMouseCursor = EMouseCursor::Crosshairs;
-	}
-
-	const URTSInputPanelSettings* Settings = GetDefault<URTSInputPanelSettings>();
-	const int32 GuidanceRadiusCells = FMath::Clamp(
-		Settings ? Settings->BuildPlacementGuidanceRadiusCells : MaxBuildPlacementGuidanceRadiusCells,
-		1,
-		MaxBuildPlacementGuidanceRadiusCells);
-	if (Settings && !Settings->bEnableHashGridSelectionPreview)
-	{
-		return;
-	}
-	AActor* PreviewActor = GetOrCreateBuildPlacementPreviewActor();
-	if (!PreviewActor)
-	{
-		UE_LOG(LogTemp, Warning, TEXT("RTSSelector: Could not create the visible build-placement preview host."));
-		return;
-	}
-	ConfigureBuildPlacementModel(PreviewActor, PreviewUnit);
-
-	if (!HashGridSelectionDecalComponent)
-	{
-		HashGridSelectionDecalComponent = NewObject<UDecalComponent>(
-			PreviewActor,
-			TEXT("RTSHashGridSelectionDecal"),
-			RF_Transient);
-		if (HashGridSelectionDecalComponent)
-		{
-			PreviewActor->AddInstanceComponent(HashGridSelectionDecalComponent);
-			HashGridSelectionDecalComponent->RegisterComponentWithWorld(GetWorld());
-			HashGridSelectionDecalComponent->SetWorldRotation(FRotator(-90.0f, 0.0f, 0.0f));
-			HashGridSelectionDecalComponent->SetVisibility(false);
-			HashGridSelectionDecalComponent->FadeScreenSize = 0.0f;
-		}
-	}
-
-	if (!HashGridSelectionDecalComponent)
-	{
-		return;
-	}
-
-	if (!HashGridSelectionDecalComponent->GetDecalMaterial())
-	{
-		UMaterialInterface* DecalMaterial = Settings ? Settings->HashGridSelectionDecalMaterial.LoadSynchronous() : nullptr;
-		if (!DecalMaterial)
-		{
-			DecalMaterial = Cast<UMaterialInterface>(StaticLoadObject(
-				UMaterialInterface::StaticClass(),
-				nullptr,
-				TEXT("/RTSInputSystem/Feedback/M_RTSBuildPlacementGrid.M_RTSBuildPlacementGrid")
-			));
-		}
-
-		if (DecalMaterial)
-		{
-			HashGridSelectionDecalComponent->SetDecalMaterial(DecalMaterial);
-			HashGridSelectionDecalComponent->CreateDynamicMaterialInstance();
-		}
-		else if (Settings && !Settings->HashGridSelectionDecalMaterial.IsNull())
-		{
-			UE_LOG(LogTemp, Warning, TEXT("RTSSelector: Could not load configured hash-grid selection decal material."));
-		}
-	}
-
-	const float DecalDepth = Settings ? Settings->HashGridSelectionDecalDepth : 4096.0f;
-	HashGridSelectionDecalComponent->DecalSize = FVector(
-		FMath::Max(1.0f, DecalDepth),
-		FMath::Max(1.0f, ActiveHashGridFootprintCells.X * ActiveHashGridCellSize),
-		FMath::Max(1.0f, ActiveHashGridFootprintCells.Y * ActiveHashGridCellSize)
-	);
-	GetOrCreateBuildPlacementFootprint(PreviewActor);
-	UE_LOG(LogTemp, Display, TEXT("RTSSelector: Visible build-placement preview started for %s (footprint %dx%d, guide radius %d cells at %.1f UU; footprint valid=%s invalid=%s; guide valid=%s invalid=%s)."),
-		*CommandTag.ToString(),
-		FMath::RoundToInt(ActiveHashGridFootprintCells.X),
-		FMath::RoundToInt(ActiveHashGridFootprintCells.Y),
-		GuidanceRadiusCells,
-		ActiveHashGridCellSize,
-		Settings ? *Settings->BuildPlacementValidColor.ToString() : TEXT("fallback-green"),
-		Settings ? *Settings->BuildPlacementInvalidColor.ToString() : TEXT("fallback-red"),
-		Settings ? *Settings->BuildPlacementGuidanceValidColor.ToString() : TEXT("fallback-blue"),
-		Settings ? *Settings->BuildPlacementGuidanceInvalidColor.ToString() : TEXT("fallback-yellow"));
-
-	UpdateHashGridSelectionPreview();
+	
 }
 
 void URTSSelector::UpdateHashGridSelectionPreview()
@@ -3482,7 +3192,7 @@ void URTSSelector::CommitHashGridSelection()
 		{
 			if (URTSSelectionSubsystem* SelectionSubsystem = LocalPlayer->GetSubsystem<URTSSelectionSubsystem>())
 			{
-				SelectionSubsystem->IssueCommandWithLocation(CommandToIssue, Result.WorldLocation, bKeepPlacing);
+				SelectionSubsystem->ExecuteCommand(TargetingCommandDefinition, & Result.WorldLocation , FEntityHandle() );
 			}
 		}
 	}
@@ -3498,7 +3208,7 @@ void URTSSelector::CommitHashGridSelection()
 
 	bIsHashGridSelecting = false;
 	EndHashGridSelectionPreview();
-	bIsTargeting = false;
+	bIsTargeting = false  ;
 	PendingCommandTag = FGameplayTag::EmptyTag;
 	PendingTargetType = ERTSCommandTargetType::Location;
 	ActiveHashGridFootprintCells = FVector2D::ZeroVector;
@@ -3584,33 +3294,141 @@ bool FRTSBuildingPlacementPreviewTest::RunTest(const FString& Parameters)
 }
 #endif
 
-bool URTSSelector::BeginCommandTargeting(URTSCommandButton* Command)
+bool URTSSelector::BeginCommandTargeting(URTSCommandButton* Command  )
 {
-	if (!Command || (Command->TargetType != ERTSCommandTargetType::Location
-		&& Command->TargetType != ERTSCommandTargetType::LocationOrTarget
-		&& Command->TargetType != ERTSCommandTargetType::TargetActor))
-	{
+	if (!Command || Command->TargetType == ERTSCommandTargetType::Instant)
+	
 		return false;
-	}
-	if (Command->PlacementFootprintCells.X > 0 && Command->PlacementFootprintCells.Y > 0)
+	
+	const bool bFootprint =Command->PlacementFootprintCells.X > 0 && Command->PlacementFootprintCells.Y > 0 ;
+	    if (bFootprint || ShouldUseHashGridSelectionForCommand(Command->CommandTag) )
 	{
 		const URTSInputPanelSettings* Settings = GetDefault<URTSInputPanelSettings>();
-		BeginHashGridSelectionWithFootprintAndPreview(Command->CommandTag,
-			FVector2D(Command->PlacementFootprintCells),
+		BeginHashGridSelectionForContext(Command->CommandTag,
+			 bFootprint ? FVector2D(Command->PlacementFootprintCells )
+			                : Settings ? Settings->HashGridSelectionFootprintCells : FVector2D(64.0f, 64.0f ),
 			Settings ? Settings->HashGridCellSize : 16.0f,
-			Command->PlacementPreviewUnit.LoadSynchronous());
+			 bFootprint ? Command->PlacementPreviewUnit.LoadSynchronous()  : nullptr , Command );
 	}
 	else
 	{
-		BeginTargetingWithType(Command->CommandTag, Command->TargetType);
-	}
-	TargetingCommandDefinition = Command;
-	if (ULocalPlayer* LocalPlayer = PlayerController ? PlayerController->GetLocalPlayer() : nullptr)
-	{
-		if (URTSSelectionSubsystem* Selection = LocalPlayer->GetSubsystem<URTSSelectionSubsystem>())
-		{
-			Selection->RequestCommandRefresh();
-		}
-	}
+	        ClearSelectableHoverPreview( false);
+	        EndHashGridSelectionPreview();
+	        bIsTargeting = true;
+	        PendingCommandTag = Command->CommandTag;
+	        PendingTargetType = Command->TargetType ;
+	        if (PlayerController ) PlayerController->CurrentMouseCursor = EMouseCursor::Crosshairs ;
+	
+	 } TargetingCommandDefinition = Command;
+	Command->CommandSelection->RequestCommandRefresh();
+		
 	return true;
 }
+
+void URTSSelector::BeginHashGridSelectionForContext(FGameplayTag CommandTag, FVector2D FootprintCells, float CellSize, UMassBattleAgentConfigDataAsset* PreviewUnit, URTSCommandButton* Command)
+{
+	
+	ClearSelectableHoverPreview(false);
+	EndHashGridSelectionPreview() ;
+	    TargetingCommandDefinition = Command ;
+
+	bIsTargeting = true;
+	bIsHashGridSelecting = true;
+	PendingCommandTag = CommandTag;
+	PendingTargetType = ERTSCommandTargetType::Location;
+	ActiveHashGridFootprintCells = FVector2D(
+		FMath::Max(1.0f, FootprintCells.X),
+		FMath::Max(1.0f, FootprintCells.Y)
+	);
+	ActiveHashGridCellSize = FMath::Max(1.0f, CellSize);
+
+	if (PlayerController)
+	{
+		PlayerController->CurrentMouseCursor = EMouseCursor::Crosshairs;
+	}
+
+	const URTSInputPanelSettings* Settings = GetDefault<URTSInputPanelSettings>();
+	const int32 GuidanceRadiusCells = FMath::Clamp(
+		Settings ? Settings->BuildPlacementGuidanceRadiusCells : MaxBuildPlacementGuidanceRadiusCells,
+		1,
+		MaxBuildPlacementGuidanceRadiusCells);
+	if (Settings && !Settings->bEnableHashGridSelectionPreview)
+	{
+		return;
+	}
+	AActor* PreviewActor = GetOrCreateBuildPlacementPreviewActor();
+	if (!PreviewActor)
+	{
+		UE_LOG(LogTemp, Warning, TEXT("RTSSelector: Could not create the visible build-placement preview host."));
+		return;
+	}
+	ConfigureBuildPlacementModel(PreviewActor, PreviewUnit);
+
+	if (!HashGridSelectionDecalComponent)
+	{
+		HashGridSelectionDecalComponent = NewObject<UDecalComponent>(
+			PreviewActor,
+			TEXT("RTSHashGridSelectionDecal"),
+			RF_Transient);
+		if (HashGridSelectionDecalComponent)
+		{
+			PreviewActor->AddInstanceComponent(HashGridSelectionDecalComponent);
+			HashGridSelectionDecalComponent->RegisterComponentWithWorld(GetWorld());
+			HashGridSelectionDecalComponent->SetWorldRotation(FRotator(-90.0f, 0.0f, 0.0f));
+			HashGridSelectionDecalComponent->SetVisibility(false);
+			HashGridSelectionDecalComponent->FadeScreenSize = 0.0f;
+		}
+	}
+
+	if (!HashGridSelectionDecalComponent)
+	{
+		return;
+	}
+
+	if (!HashGridSelectionDecalComponent->GetDecalMaterial())
+	{
+		UMaterialInterface* DecalMaterial = Settings ? Settings->HashGridSelectionDecalMaterial.LoadSynchronous() : nullptr;
+		if (!DecalMaterial)
+		{
+			DecalMaterial = Cast<UMaterialInterface>(StaticLoadObject(
+				UMaterialInterface::StaticClass(),
+				nullptr,
+				TEXT("/RTSInputSystem/Feedback/M_RTSBuildPlacementGrid.M_RTSBuildPlacementGrid")
+			));
+		}
+
+		if (DecalMaterial)
+		{
+			HashGridSelectionDecalComponent->SetDecalMaterial(DecalMaterial);
+			HashGridSelectionDecalComponent->CreateDynamicMaterialInstance();
+		}
+		else if (Settings && !Settings->HashGridSelectionDecalMaterial.IsNull())
+		{
+			UE_LOG(LogTemp, Warning, TEXT("RTSSelector: Could not load configured hash-grid selection decal material."));
+		}
+	}
+
+	const float DecalDepth = Settings ? Settings->HashGridSelectionDecalDepth : 4096.0f;
+	HashGridSelectionDecalComponent->DecalSize = FVector(
+		FMath::Max(1.0f, DecalDepth),
+		FMath::Max(1.0f, ActiveHashGridFootprintCells.X * ActiveHashGridCellSize),
+		FMath::Max(1.0f, ActiveHashGridFootprintCells.Y * ActiveHashGridCellSize)
+	);
+	GetOrCreateBuildPlacementFootprint(PreviewActor);
+	UE_LOG(LogTemp, Display, TEXT("RTSSelector: Visible build-placement preview started for %s (footprint %dx%d, guide radius %d cells at %.1f UU; footprint valid=%s invalid=%s; guide valid=%s invalid=%s)."),
+		*CommandTag.ToString(),
+		FMath::RoundToInt(ActiveHashGridFootprintCells.X),
+		FMath::RoundToInt(ActiveHashGridFootprintCells.Y),
+		GuidanceRadiusCells,
+		ActiveHashGridCellSize,
+		Settings ? *Settings->BuildPlacementValidColor.ToString() : TEXT("fallback-green"),
+		Settings ? *Settings->BuildPlacementInvalidColor.ToString() : TEXT("fallback-red"),
+		Settings ? *Settings->BuildPlacementGuidanceValidColor.ToString() : TEXT("fallback-blue"),
+		Settings ? *Settings->BuildPlacementGuidanceInvalidColor.ToString() : TEXT("fallback-yellow"));
+
+	UpdateHashGridSelectionPreview();
+}
+
+
+
+

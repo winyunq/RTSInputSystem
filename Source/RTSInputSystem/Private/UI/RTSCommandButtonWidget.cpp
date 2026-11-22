@@ -18,6 +18,13 @@
 #include "Engine/LocalPlayer.h"
 #include "GameFramework/PlayerController.h"
 #include "RTSSelector.h"
+#include "Brushes/SlateRoundedBoxBrush.h"
+#include "Widgets/Images/SImage.h"
+#include "Widgets/SOverlay.h"
+#if WITH_DEV_AUTOMATION_TESTS
+#include "Misc/AutomationTest.h"
+#include "Types/SlateAttributeMetaData.h"
+#endif
 
 namespace
 {
@@ -86,8 +93,45 @@ TSharedRef<SWidget> URTSCommandButtonWidget::RebuildWidget()
 		WidgetTree->RootWidget = RootSize;
 	}
 
-	return Super::RebuildWidget();
+	static const FSlateRoundedBoxBrush StateFrame(FLinearColor::Transparent, 0.0f, FLinearColor::White, 3.0f);
+	return SNew(SOverlay)
+		+ SOverlay::Slot()[Super::RebuildWidget()]
+		+ SOverlay::Slot()
+		[
+			SNew(SImage).Image(&StateFrame)
+			.ColorAndOpacity_Lambda([this]() { return bKeyboardPressed ? KeyboardPressedTint : ActiveCommandTint; })
+			.Visibility_Lambda([this]() { return bCommandActive || bKeyboardPressed
+				? EVisibility::HitTestInvisible : EVisibility::Collapsed; })
+		];
 }
+
+#if WITH_DEV_AUTOMATION_TESTS
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FRTSCommandStateFrameTest, "Winyunq.Input.UnitPresentation.CommandStateFrame",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+bool FRTSCommandStateFrameTest::RunTest(const FString& Parameters)
+{
+	URTSCommandButtonWidget* Button = NewObject<URTSCommandButtonWidget>();
+	Button->Initialize();
+	const TSharedRef<SWidget> Face = Button->RebuildWidget();
+	const TSharedRef<SWidget> Frame = Face->GetChildren()->GetChildAt(1);
+	const auto ReadVisibility = [&Frame]()
+	{
+		FSlateAttributeMetaData::UpdateOnlyVisibilityAttributes(Frame.Get(),
+			FSlateAttributeMetaData::EInvalidationPermission::AllowInvalidationIfConstructed);
+		return Frame->GetVisibility();
+	};
+	TestTrue(TEXT("Idle command has no state frame"), ReadVisibility() == EVisibility::Collapsed);
+	Button->SetCommandActive(true);
+	TestTrue(TEXT("Current command exposes its frame"), ReadVisibility() == EVisibility::HitTestInvisible);
+	Button->SetCommandActive(false);
+	Button->SetKeyboardPressed(true);
+	TestTrue(TEXT("Keyboard press exposes its frame"), ReadVisibility() == EVisibility::HitTestInvisible);
+	Button->SetKeyboardPressed(false);
+	TestTrue(TEXT("Old command frame clears when state changes"), ReadVisibility() == EVisibility::Collapsed);
+	return true;
+}
+#endif
 
 void URTSCommandButtonWidget::NativeConstruct()
 {
@@ -119,12 +163,17 @@ void URTSCommandButtonWidget::NativeDestruct()
 	Super::NativeDestruct();
 }
 
-void URTSCommandButtonWidget::BindCommandState(const TArray<FRTSUnitData>& Owners)
+void URTSCommandButtonWidget::BindCommandState(const TArray<FRTSUnitData>& Owners  )
 {
-	BoundProgressSources.Reset();
+	CommandOwnerEntity = Owners.IsEmpty() ? FEntityHandle() : Owners[0].EntityHandle;
+		BoundProgressSources.Reset();
 	for (const FRTSUnitData& Owner : Owners)
+	{
 		if (UObject* Provider = Owner.GetProgressProvider())
+		{
 			BoundProgressSources.Emplace(Provider, Owner.ProgressSourceId);
+		}
+	}
 	CommandStateDependencies.Reset();
 	if (ButtonData)
 	{
@@ -604,47 +653,16 @@ void URTSCommandButtonWidget::ApplyInteractionVisualState()
 
 	const FLinearColor Tint = bKeyboardPressed
 		? KeyboardPressedTint
-		: (bCommandActive ? ActiveCommandTint : FLinearColor::White);
+		: FLinearColor::White;
 	MainButton->SetBackgroundColor(DefaultBackgroundColor * Tint);
 }
 
 void URTSCommandButtonWidget::HandleClicked()
 {
 	if (ButtonData)
-	{
-        UE_LOG(LogTemp, Verbose, TEXT("RTSCommandButtonWidget: Clicked %s"), *ButtonData->CommandTag.ToString());
-		if (APlayerController* Controller = GetOwningPlayer())
-				{
-					if (URTSSelector* Selector = Controller->FindComponentByClass<URTSSelector>())
-					{
-						if (Selector->BeginCommandTargeting(ButtonData))
-						
-							return;
-						
-					}
-				}
-				const FGameplayTag TrainTag = FGameplayTag::RequestGameplayTag(TEXT("RTS.Command.Train"), false);
-				if (ButtonData->CommandTag.MatchesTag(TrainTag))
-				{
-					APlayerController* Controller = GetOwningPlayer();
-					UFunction* Submit = Controller ? Controller->FindFunction(TEXT("SendLockstepCommandToServer")) : nullptr;
-					if (!Submit || BoundProgressSources.IsEmpty()) return;
-					struct FProductionInput
-					{
-						FName CommandTag = TEXT("RTS.Production.EnqueueOrder");
-						TArray<FName> NamePayload;
-						TArray<int32> IntPayload;
-						TArray<float> FloatPayload;
-						int32 ExtraDeferTicks = 0;
-					} Input;
-					Input.NamePayload.Add(ButtonData->CommandTag.GetTagName());
-					Algo::Transform(BoundProgressSources, Input.NamePayload,
-						[](const auto& Source) { return Source.Value; });
-					Controller->ProcessEvent(Submit, &Input);
-					return;
-				}
-				OnCommandClicked.Broadcast(ButtonData->CommandTag);
-	}
+	
+				OnCommandClicked.Broadcast(this);
+	
 }
 
 void URTSCommandButtonWidget::HandleProgressClicked()
@@ -655,3 +673,5 @@ void URTSCommandButtonWidget::HandleProgressClicked()
 		IRTSCommandProgressController::Execute_RequestCancelCommandProgressItem(ProgressActionTarget, ProgressItemId);
 	}
 }
+
+ 

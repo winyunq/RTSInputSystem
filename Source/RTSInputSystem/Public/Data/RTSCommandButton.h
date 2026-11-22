@@ -8,6 +8,8 @@
 #include "GameplayTagContainer.h"
 #include "InputCoreTypes.h"
 #include "Commands/RTSCommandRequirements.h"
+#include "RTSSelectionStructs.h"
+#include "GameFramework/PlayerController.h"
 #include "RTSCommandButton.generated.h"
 
 class UMassBattleAgentConfigDataAsset;
@@ -22,8 +24,16 @@ enum class ERTSCommandTargetType : uint8
 };
 
 /**
- * Represents a single button in the RTS Command Card (UI).
- * This asset is pure data and references the logical command via GameplayTag.
+ * @brief 保存命令卡按钮的配置并提供执行入口。
+ * @details 定义保存命令标签、目标种类和可用条件。选区构建索引时写入 CommandSelection，派生按钮可以覆盖 Execute。
+ * 
+ * ```
+ * 面板配置 → 原按钮 → 命令控件
+ * 已匹配目标 → Execute → 当前执行实现
+ *                      └→ 基类经 CommandSelection 提交
+ * ```
+ * @ProductDocument
+ * @note 待接入的调用契约。选区或命令面板变化时确定每个按钮的受令组，将组引用和执行动作各绑定一次。两个 Execute 重载只接收目标，执行阶段直接使用该按钮的绑定。单位命令与确认反馈沿用已有发令入口。
  */
 UCLASS(BlueprintType)
 class RTSINPUTSYSTEM_API URTSCommandButton : public UDataAsset
@@ -118,13 +128,8 @@ public:
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Placement")
 	TSoftObjectPtr<UMassBattleAgentConfigDataAsset> PlacementPreviewUnit;
 
-    /**
-     * Executes the logic associated with this button.
-     * @param Executor The Actor that is performing the command.
-     */
-    UFUNCTION(BlueprintNativeEvent, Category = "RTS Command")
-    void Execute(AActor* Executor);
-    virtual void Execute_Implementation(AActor* Executor);
+    
+    
 
 	/**
 	 * Optional alternate-click hook used by non-Actor command sources.
@@ -141,13 +146,23 @@ public:
 	bool IsAutoCastEnabledForContext(UObject* WorldContextObject, AActor* Executor) const;
 	virtual bool IsAutoCastEnabledForContext_Implementation(UObject* WorldContextObject, AActor* Executor) const;
 
-	/** One command-state query supplies visibility, availability and its explanation. */
+	/**
+	 * One command-state query supplies visibility, availability and its explanation.
+	 * @ProductDocument
+	 */
 	virtual FRTSCommandState GetCommandStateForContext(
 		const UObject* WorldContextObject, const AActor* Executor, FName SourceId = NAME_None) const;
 
 	/** Optional availability hook for specialized command-button subclasses. */
 	UFUNCTION(BlueprintNativeEvent, BlueprintCallable, Category = "RTS Command")
 	bool IsAvailableForContext(UObject* WorldContextObject, AActor* Executor) const;
+	/**
+	 * @brief 按当前业务对象的接口判断按钮是否可用。
+	 * @details 优先询问 CommandContext 中的命令接口，其次询问 Executor 的同一接口。没有可询问对象时返回 true。
+	 * @param WorldContextObject 沿用的世界上下文参数。
+	 * @param Executor 备用命令上下文。
+	 * @return 命令接口给出的可用状态，或缺少接口时的默认值 true。
+	 */
 	virtual bool IsAvailableForContext_Implementation(
 		UObject* WorldContextObject,
 		AActor* Executor) const;
@@ -162,7 +177,15 @@ public:
 		return DisplayName;
 	}
 
-	/** State owners read by this definition's availability query; binding is managed by the shared widget. */
+	/**
+	 * State owners read by this definition's availability query; binding is managed by the shared widget.
+	 * @ProductDocument
+	 * @brief 为命令控件收集应观察的状态对象。
+	 * @details 研究按钮添加 CommandContext。普通按钮在其命令接口能提供当前状态时添加同一对象。
+	 * @param WorldContextObject 沿用的世界上下文参数。
+	 * @param Executor 沿用的执行者上下文。
+	 * @param OutDependencies 追加状态对象的数组。使用唯一追加。
+	 */
 	virtual void GetCommandStateDependencies(const UObject* WorldContextObject,
 		const AActor* Executor, TArray<UObject*>& OutDependencies) const;
 
@@ -170,4 +193,27 @@ public:
 	UFUNCTION(BlueprintNativeEvent, BlueprintCallable, Category = "RTS Command")
 	int32 GetQueueCountForContext(UObject* WorldContextObject, AActor* Executor) const;
 	virtual int32 GetQueueCountForContext_Implementation(UObject* WorldContextObject, AActor* Executor) const;
+
+	
+
+	/**
+	 * @brief 当前给该按钮定义建立索引的选区子系统。
+	 * @details 由 @ref URTSSelectionSubsystem::RebuildCommandIndex 写入。基类 Execute 使用此引用提交命令。
+	 */
+	UPROPERTY(Transient) TObjectPtr<class URTSSelectionSubsystem> CommandSelection;
+
+	/**
+	 * @brief 执行无目标或以单位为目标的命令。
+	 * @details 基类把按钮的命令标签和目标句柄交给 @ref URTSSelectionSubsystem::SubmitCommandContext 。选区子系统在提交时按标签取得已建立索引的响应组。
+	 * @param Target 被命令指向的 Mass 实体句柄。无目标命令传空句柄。
+	 */
+	virtual void Execute(FEntityHandle Target = {});
+	/**
+	 * @brief 执行以世界坐标为目标的命令。
+	 * @details 基类将按钮的命令标签和位置交给 @ref URTSSelectionSubsystem::SubmitCommandContext 。响应组由提交时的选区命令索引提供。
+	 * @param Target 玩家指定的目标世界坐标。
+	 */
+	virtual void Execute(const FVector& Target);
+
+    TDelegate<void(FEntityHandle)> OnExecuteTarget;
 };

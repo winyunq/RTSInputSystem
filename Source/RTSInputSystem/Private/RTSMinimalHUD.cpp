@@ -9,6 +9,7 @@
 #include "UI/RTSSelectionQueryButton.h"
 #include "UI/RTSUnitPanelWidget.h"
 #include "Blueprint/WidgetTree.h"
+#include "Blueprint/WidgetLayoutLibrary.h"
 #include "Components/Border.h"
 #include "Components/CanvasPanel.h"
 #include "Components/CanvasPanelSlot.h"
@@ -17,8 +18,11 @@
 #include "Components/Overlay.h"
 #include "Components/OverlaySlot.h"
 #include "Components/ScaleBox.h"
+#include "Components/SafeZone.h"
+#include "Components/ScrollBox.h"
 #include "Components/SizeBox.h"
 #include "Components/TextBlock.h"
+#include "Components/WrapBox.h"
 #include "GameFramework/PlayerController.h"
 
 namespace
@@ -32,7 +36,8 @@ namespace
 		TSubclassOf<URTSSelectionQueryButton> ButtonClass,
 		const FName Name,
 		const FText& Label,
-		const FName RequiredTag = NAME_None)
+		const FName RequiredTag = NAME_None,
+		const bool bCompact = false)
 	{
 		URTSSelectionQueryButton* Button = WidgetTree->ConstructWidget<URTSSelectionQueryButton>(
 			ButtonClass, Name);
@@ -48,11 +53,12 @@ namespace
 		Text->SetText(Label);
 		Text->SetJustification(ETextJustify::Center);
 		Text->SetColorAndOpacity(FSlateColor(FLinearColor::White));
+		Text->SetAutoWrapText(false);
 		Button->AddChild(Text);
 
 		if (UHorizontalBoxSlot* Slot = Parent->AddChildToHorizontalBox(Button))
 		{
-			Slot->SetPadding(FMargin(4.0f));
+			Slot->SetPadding(FMargin(bCompact ? 2.0f : 4.0f));
 			Slot->SetSize(FSlateChildSize(ESlateSizeRule::Fill));
 			Slot->SetVerticalAlignment(VAlign_Fill);
 		}
@@ -65,7 +71,9 @@ namespace
 		UWidget* Content,
 		const FName Name,
 		const float Width,
-		const float Height)
+		const float Height,
+		const bool bCompact = false,
+		const float CompactScale = 1.0f)
 	{
 		USizeBox* Host = WidgetTree->ConstructWidget<USizeBox>(
 			USizeBox::StaticClass(), FName(*FString::Printf(TEXT("%sHost"), *Name.ToString())));
@@ -74,10 +82,23 @@ namespace
 
 		UScaleBox* Scale = WidgetTree->ConstructWidget<UScaleBox>(
 			UScaleBox::StaticClass(), Name);
-		Scale->SetStretch(EStretch::ScaleToFit);
-		Scale->SetStretchDirection(EStretchDirection::DownOnly);
+		Scale->SetStretch(bCompact ? EStretch::UserSpecified : EStretch::ScaleToFit);
+		Scale->SetStretchDirection(bCompact ? EStretchDirection::Both : EStretchDirection::DownOnly);
+		Scale->SetUserSpecifiedScale(CompactScale);
 		Scale->SetContent(Content);
-		Host->AddChild(Scale);
+		if (bCompact)
+		{
+			UScrollBox* Vertical = WidgetTree->ConstructWidget<UScrollBox>();
+			UScrollBox* Horizontal = WidgetTree->ConstructWidget<UScrollBox>();
+			Horizontal->SetOrientation(Orient_Horizontal);
+			Horizontal->AddChild(Scale);
+			Vertical->AddChild(Horizontal);
+			Host->SetContent(Vertical);
+		}
+		else
+		{
+			Host->AddChild(Scale);
+		}
 
 		if (UHorizontalBoxSlot* Slot = Parent->AddChildToHorizontalBox(Host))
 		{
@@ -93,35 +114,41 @@ TSharedRef<SWidget> URTSMinimalHUDWidget::RebuildWidget()
 {
 	if (WidgetTree && !WidgetTree->RootWidget)
 	{
+		const FVector2D ViewportSize = UWidgetLayoutLibrary::GetViewportSize(this);
+		bool bCompact = ViewportSize.X > 0.0f && ViewportSize.X <= 1100.0f;
+#if PLATFORM_ANDROID
+		bCompact = true;
+#endif
 		UCanvasPanel* Root = WidgetTree->ConstructWidget<UCanvasPanel>(
 			UCanvasPanel::StaticClass(), TEXT("RTSMinimalHUDRoot"));
+		Root->SetVisibility(ESlateVisibility::SelfHitTestInvisible);
 
 		UBorder* QuickSelectionFrame = WidgetTree->ConstructWidget<UBorder>(
 			UBorder::StaticClass(), TEXT("QuickSelectionFrame"));
 		QuickSelectionFrame->SetBrushColor(PanelColor);
-		QuickSelectionFrame->SetPadding(FMargin(6.0f));
+		QuickSelectionFrame->SetPadding(FMargin(bCompact ? 0.0f : 6.0f));
 		UHorizontalBox* QuickSelection = WidgetTree->ConstructWidget<UHorizontalBox>(
 			UHorizontalBox::StaticClass(), TEXT("QuickSelection"));
 		QuickSelectionFrame->SetContent(QuickSelection);
 
 		AddSelectionButton(
 			WidgetTree, QuickSelection, URTSSelectAllArmyButton::StaticClass(),
-			TEXT("SelectArmy"), NSLOCTEXT("RTSInputSystem", "MinimalHUDArmy", "ARMY"));
+			TEXT("SelectArmy"), bCompact ? FText::FromString(TEXT("全部")) : NSLOCTEXT("RTSInputSystem", "MinimalHUDArmy", "ARMY"), NAME_None, bCompact);
 		AddSelectionButton(
 			WidgetTree, QuickSelection, URTSSelectAllIdleArmyButton::StaticClass(),
-			TEXT("SelectIdle"), NSLOCTEXT("RTSInputSystem", "MinimalHUDIdle", "IDLE"));
+			TEXT("SelectIdle"), bCompact ? FText::FromString(TEXT("待命")) : NSLOCTEXT("RTSInputSystem", "MinimalHUDIdle", "IDLE"), NAME_None, bCompact);
 		AddSelectionButton(
 			WidgetTree, QuickSelection, URTSSelectionQueryButton::StaticClass(),
-			TEXT("SelectInfantry"), NSLOCTEXT("RTSInputSystem", "MinimalHUDInfantry", "INFANTRY"),
-			TEXT("RTS.Selection.Army.Ground.Infantry"));
+			TEXT("SelectInfantry"), bCompact ? FText::FromString(TEXT("步兵")) : NSLOCTEXT("RTSInputSystem", "MinimalHUDInfantry", "INFANTRY"),
+			TEXT("RTS.Selection.Army.Ground.Infantry"), bCompact);
 		AddSelectionButton(
 			WidgetTree, QuickSelection, URTSSelectionQueryButton::StaticClass(),
-			TEXT("SelectArmor"), NSLOCTEXT("RTSInputSystem", "MinimalHUDArmor", "ARMOR"),
-			TEXT("RTS.Selection.Army.Ground.Armor"));
+			TEXT("SelectArmor"), bCompact ? FText::FromString(TEXT("装甲")) : NSLOCTEXT("RTSInputSystem", "MinimalHUDArmor", "ARMOR"),
+			TEXT("RTS.Selection.Army.Ground.Armor"), bCompact);
 		AddSelectionButton(
 			WidgetTree, QuickSelection, URTSSelectionQueryButton::StaticClass(),
-			TEXT("SelectStructures"), NSLOCTEXT("RTSInputSystem", "MinimalHUDStructures", "STRUCTURES"),
-			TEXT("RTS.Selection.Structure"));
+			TEXT("SelectStructures"), bCompact ? FText::FromString(TEXT("建筑")) : NSLOCTEXT("RTSInputSystem", "MinimalHUDStructures", "STRUCTURES"),
+			TEXT("RTS.Selection.Structure"), bCompact);
 
 		if (UCanvasPanelSlot* QuickSlot = Root->AddChildToCanvas(QuickSelectionFrame))
 		{
@@ -133,16 +160,16 @@ TSharedRef<SWidget> URTSMinimalHUDWidget::RebuildWidget()
 
 		UBorder* BottomFrame = WidgetTree->ConstructWidget<UBorder>(
 			UBorder::StaticClass(), TEXT("BottomFrame"));
-		BottomFrame->SetBrushColor(PanelColor);
-		BottomFrame->SetPadding(FMargin(8.0f));
+		BottomFrame->SetBrushColor(bCompact ? FLinearColor::Transparent : PanelColor);
+		BottomFrame->SetPadding(FMargin(bCompact ? 4.0f : 8.0f));
 		UHorizontalBox* BottomPanels = WidgetTree->ConstructWidget<UHorizontalBox>(
 			UHorizontalBox::StaticClass(), TEXT("BottomPanels"));
 		BottomFrame->SetContent(BottomPanels);
 
 		USizeBox* MinimapHost = WidgetTree->ConstructWidget<USizeBox>(
 			USizeBox::StaticClass(), TEXT("MinimapHost"));
-		MinimapHost->SetWidthOverride(250.0f);
-		MinimapHost->SetHeightOverride(250.0f);
+		MinimapHost->SetWidthOverride(bCompact ? 88.0f : 250.0f);
+		MinimapHost->SetHeightOverride(bCompact ? 88.0f : 250.0f);
 		UOverlay* MinimapOverlay = WidgetTree->ConstructWidget<UOverlay>(
 			UOverlay::StaticClass(), TEXT("MinimapOverlay"));
 		MinimapHost->AddChild(MinimapOverlay);
@@ -152,9 +179,7 @@ TSharedRef<SWidget> URTSMinimalHUDWidget::RebuildWidget()
 		MinimapBackground->SetBrushColor(FLinearColor(0.025f, 0.07f, 0.08f, 1.0f));
 		UTextBlock* MinimapLabel = WidgetTree->ConstructWidget<UTextBlock>(
 			UTextBlock::StaticClass(), TEXT("MinimapLabel"));
-		MinimapLabel->SetText(NSLOCTEXT(
-			"RTSInputSystem", "MinimalHUDMinimap",
-			"MINIMAP INPUT\nLeft: camera jump\nRight: move command\nRenderer is optional"));
+		MinimapLabel->SetText(NSLOCTEXT("RTSInputSystem", "MinimalHUDMinimapTitle", "地图"));
 		MinimapLabel->SetJustification(ETextJustify::Center);
 		MinimapLabel->SetColorAndOpacity(FSlateColor(AccentColor));
 		MinimapBackground->SetContent(MinimapLabel);
@@ -175,15 +200,15 @@ TSharedRef<SWidget> URTSMinimalHUDWidget::RebuildWidget()
 
 		URTSUnitPanelWidget* UnitPanel = WidgetTree->ConstructWidget<URTSUnitPanelWidget>(
 			URTSUnitPanelWidget::StaticClass(), TEXT("UnitPanel"));
-		AddScaledPanel(WidgetTree, BottomPanels, UnitPanel, TEXT("UnitPanelScale"), 650.0f, 300.0f);
+		AddScaledPanel(WidgetTree, BottomPanels, UnitPanel, TEXT("UnitPanelScale"), bCompact ? 300.0f : 650.0f, bCompact ? 88.0f : 300.0f, bCompact, 0.4f);
 
 		URTSActiveGroupWidget* ActiveGroup = WidgetTree->ConstructWidget<URTSActiveGroupWidget>(
 			URTSActiveGroupWidget::StaticClass(), TEXT("ActiveGroup"));
-		AddScaledPanel(WidgetTree, BottomPanels, ActiveGroup, TEXT("ActiveGroupScale"), 150.0f, 150.0f);
+		AddScaledPanel(WidgetTree, BottomPanels, ActiveGroup, TEXT("ActiveGroupScale"), bCompact ? 56.0f : 150.0f, bCompact ? 88.0f : 150.0f, bCompact, 0.2f);
 
 		URTSCommanderGridWidget* CommandGrid = WidgetTree->ConstructWidget<URTSCommanderGridWidget>(
 			URTSCommanderGridWidget::StaticClass(), TEXT("CommandGrid"));
-		AddScaledPanel(WidgetTree, BottomPanels, CommandGrid, TEXT("CommandGridScale"), 520.0f, 300.0f);
+		AddScaledPanel(WidgetTree, BottomPanels, CommandGrid, TEXT("CommandGridScale"), bCompact ? 300.0f : 520.0f, bCompact ? 88.0f : 300.0f, bCompact, 0.5f);
 
 		if (UCanvasPanelSlot* BottomSlot = Root->AddChildToCanvas(BottomFrame))
 		{
@@ -193,10 +218,88 @@ TSharedRef<SWidget> URTSMinimalHUDWidget::RebuildWidget()
 			BottomSlot->SetSize(FVector2D(1600.0f, 318.0f));
 		}
 
-		WidgetTree->RootWidget = Root;
+		if (bCompact)
+		{
+			UWrapBox* MobileBottomPanels = WidgetTree->ConstructWidget<UWrapBox>(UWrapBox::StaticClass(), TEXT("MobileBottomPanels"));
+			MobileBottomPanels->SetExplicitWrapSize(true);
+			MobileBottomPanels->SetInnerSlotPadding(FVector2D(4.0f, 4.0f));
+			MobileBottomPanels->SetHorizontalAlignment(HAlign_Center);
+			const TArray<UWidget*> Panels = BottomPanels->GetAllChildren();
+			BottomPanels->ClearChildren();
+			BottomFrame->SetContent(MobileBottomPanels);
+			for (UWidget* Panel : Panels)
+			{
+				MobileBottomPanels->AddChildToWrapBox(Panel);
+			}
+			CompactHudScale = WidgetTree->ConstructWidget<UScaleBox>();
+			CompactHudScale->SetStretch(EStretch::UserSpecified);
+			CompactHudScale->SetStretchDirection(EStretchDirection::Both);
+			CompactHudSize = WidgetTree->ConstructWidget<USizeBox>();
+			CompactHudSize->SetContent(Root);
+			CompactHudScale->SetContent(CompactHudSize);
+			USafeZone* SafeZone = WidgetTree->ConstructWidget<USafeZone>();
+			SafeZone->SetSidesToPad(true, true, true, true);
+			SafeZone->SetContent(CompactHudScale);
+			WidgetTree->RootWidget = SafeZone;
+		}
+		else
+		{
+			WidgetTree->RootWidget = Root;
+		}
 	}
 
 	return Super::RebuildWidget();
+}
+
+void URTSMinimalHUDWidget::NativeTick(const FGeometry& MyGeometry, float InDeltaTime)
+{
+	Super::NativeTick(MyGeometry, InDeltaTime);
+	if (!CompactHudScale || !CompactHudSize)
+	{
+		return;
+	}
+	const float ViewportScale = UWidgetLayoutLibrary::GetViewportScale(this);
+	const FVector2D SafePixels = CompactHudScale->GetCachedGeometry().GetLocalSize() * ViewportScale;
+	if (SafePixels.X <= 0.0f || SafePixels.Y <= 0.0f || ViewportScale <= 0.0f)
+	{
+		return;
+	}
+	float LayoutScale = 1.0f;
+#if PLATFORM_ANDROID
+	LayoutScale = FMath::Min(SafePixels.X, SafePixels.Y) / 390.0f;
+#endif
+	const FVector2D LogicalSize = SafePixels / LayoutScale;
+	if (LogicalSize.Equals(CompactLogicalSize, 0.5f) && FMath::IsNearlyEqual(ViewportScale, CompactViewportScale)
+		&& FMath::IsNearlyEqual(LayoutScale, CompactLayoutScale))
+	{
+		return;
+	}
+	CompactLogicalSize = LogicalSize;
+	CompactViewportScale = ViewportScale;
+	CompactLayoutScale = LayoutScale;
+	CompactHudScale->SetUserSpecifiedScale(LayoutScale / ViewportScale);
+	CompactHudSize->SetWidthOverride(LogicalSize.X);
+	CompactHudSize->SetHeightOverride(LogicalSize.Y);
+	UCanvasPanelSlot* QuickSlot = CastChecked<UCanvasPanelSlot>(WidgetTree->FindWidget(TEXT("QuickSelectionFrame"))->Slot);
+	QuickSlot->SetPosition(FVector2D(0.0f, 8.0f));
+	QuickSlot->SetSize(FVector2D(FMath::Min(500.0f, LogicalSize.X - 16.0f), 48.0f));
+	UCanvasPanelSlot* BottomSlot = CastChecked<UCanvasPanelSlot>(WidgetTree->FindWidget(TEXT("BottomFrame"))->Slot);
+	BottomSlot->SetPosition(FVector2D(0.0f, -8.0f));
+	const bool bPortrait = LogicalSize.Y > LogicalSize.X;
+	BottomSlot->SetSize(FVector2D(LogicalSize.X - 16.0f, bPortrait ? 188.0f : 96.0f));
+	const float InnerWidth = LogicalSize.X - 24.0f;
+	CastChecked<UWrapBox>(WidgetTree->FindWidget(TEXT("MobileBottomPanels")))->SetWrapSize(InnerWidth);
+	const float AvailableWidth = InnerWidth - 156.0f;
+	const float CommandWidth = bPortrait ? InnerWidth : FMath::Min(300.0f, AvailableWidth * 0.6f);
+	CastChecked<USizeBox>(WidgetTree->FindWidget(TEXT("UnitPanelScaleHost")))->SetWidthOverride(bPortrait ? AvailableWidth + 4.0f : AvailableWidth - CommandWidth);
+	CastChecked<USizeBox>(WidgetTree->FindWidget(TEXT("CommandGridScaleHost")))->SetWidthOverride(CommandWidth);
+	for (const TCHAR* Name : { TEXT("SelectArmyLabel"), TEXT("SelectIdleLabel"), TEXT("SelectInfantryLabel"), TEXT("SelectArmorLabel"), TEXT("SelectStructuresLabel"), TEXT("MinimapLabel") })
+	{
+		UTextBlock* Text = CastChecked<UTextBlock>(WidgetTree->FindWidget(Name));
+		FSlateFontInfo Font = Text->GetFont();
+		Font.Size = 14;
+		Text->SetFont(Font);
+	}
 }
 
 void ARTSMinimalHUD::BeginPlay()

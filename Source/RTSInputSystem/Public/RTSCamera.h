@@ -16,10 +16,19 @@ class FViewport;
 DECLARE_MULTICAST_DELEGATE(FOnMinimapFrustumUpdated);
 
 /**
- * @brief       RTS 相机组件，处理视口平移、边缘滚动、意图缩放及视野投影逻辑。
+ * @brief 提供 RTS 镜头的跟随、跳转、缩放和移动边界。
+ * @details 镜头组件保存目标、缩放配置及运动边界。地图输入可调用 jumpTo 提供世界坐标。
  * 
- * 组件遵循“战略由人，战术由AI”的设计原则，旨在平衡操作的顺滑感与 UI 的即时反馈。
- **/
+ * ```
+ * 输入 / 跟随目标 / 小地图位置 → 镜头运动
+ * 缩放范围 + 移动边界 → 相机视图
+ * ```
+ * @code{.cpp}
+ * Camera->jumpTo(MapClickWorldPosition);
+ * Camera->setZoomLength(DesiredDistance, false);
+ * @endcode
+ * @ProductDocument
+ */
 UCLASS(Blueprintable, ClassGroup=(Custom), meta=(BlueprintSpawnableComponent))
 class RTSINPUTSYSTEM_API URTSCamera : public UActorComponent
 {
@@ -33,15 +42,17 @@ public:
 
 	/**
 	 * @brief       使相机视野物理锁定并跟随指定的目标 Actor
-	 * 
+	 *
 	 * @param       参数名称: target                         数据类型:        AActor*
-	 **/
+	 * @ProductDocument
+	 */
 	UFUNCTION(BlueprintCallable, Category = "RTSCamera")
 	void followTarget(AActor* target);
 
 	/**
 	 * @brief       取消当前的相机目标跟随状态
-	 **/
+	 * @ProductDocument
+	 */
 	UFUNCTION(BlueprintCallable, Category = "RTSCamera")
 	void unFollowTarget();
 
@@ -53,11 +64,25 @@ public:
 	
 	/**
 	 * @brief       将相机组件瞬間移动至指定的 X/Y 地面坐标
-	 * 
+	 *
 	 * @param       参数名称: position                       数据类型:        FVector
-	 **/
+	 * @ProductDocument
+	 */
 	UFUNCTION(BlueprintCallable, Category = "RTSCamera")
 	void jumpTo(FVector position);
+
+	/**
+	 * @brief Sets the RTS camera zoom distance.
+	 * @details Set bInstant to apply the zoom without interpolation.
+	 * @param Length Requested zoom distance.
+	 * @param bInstant Whether to apply the zoom immediately.
+	 * @ProductDocument
+	 */
+	UFUNCTION(BlueprintCallable, Category = "RTSCamera")
+	void setZoomLength(float Length, bool bInstant = false);
+
+	UFUNCTION(BlueprintCallable, Category = "RTSCamera")
+	void setMovementBounds(const FVector& Origin, const FVector& Extents);
 
 	/**
 	 * @brief       由视口的 Slate 鼠标移动事件转发，即时驱动拖拽和边缘滚动。
@@ -319,6 +344,7 @@ protected:
 private:
 #if WITH_DEV_AUTOMATION_TESTS
 	friend class FWinyunqSelectionTabInputTest;
+	friend class FCardBattleArenaViewTest;
 #endif
 	void resolveComponentDependencyPointers();
 	void setupInitialSpringArmState();

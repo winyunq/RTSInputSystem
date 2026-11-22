@@ -22,6 +22,11 @@ struct RTSINPUTSYSTEM_API FRTSMoveNavigationBatch
 	TArray<FEntityHandle> Entities;
 	FVector Goal = FVector::ZeroVector;
 	FMBMoveNavigation Navigation;
+	FVector2D FormationRegion = FVector2D::ZeroVector;
+	float FormationSpacingUU = 0.0f;
+	bool bKeepSourceFormation = false;
+	TArray<FVector> GoalLocations;
+	TFunction<TArray<FVector>(const TArray<FEntityHandle>&, const FVector&)> BuildGoalLocations;
 
 	// Optional strategic city chain, also supplied through Navigation.CustomPaths
 	// for AgentsMoveTo to advance; Goal remains the exact final destination.
@@ -68,7 +73,15 @@ public:
 	}
 };
 
-/** World-scoped provider registry shared by player, production and AI orders. */
+/** World-scoped provider registry shared by player, production and AI orders. 
+ * @brief 连接 RTS 发令与项目提供的移动导航实现。
+ * @details 导航实现注册在此入口。RTS 发令使用它构建导航批次并向导航实现报告任务激活。
+ * 
+ * ```
+ * 受令实体 + 目标 + 尺度 → BuildBatches → 移动批次
+ * 移动 / 追击任务 → 导航实现的激活与绑定入口
+ * ```
+ */
 class RTSINPUTSYSTEM_API FRTSMoveNavigationProviderRegistry
 {
 public:

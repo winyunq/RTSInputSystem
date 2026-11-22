@@ -9,11 +9,25 @@
 
 class UPrimitiveComponent;
 
+/**
+ * @brief 为可选对象提供选区资料和表现回调。
+ * @details 组件保存组键、快速选择标签、展示数值与任务显示数据。选区更新时调用选择、取消选择或悬停反馈。
+ * 
+ * ```
+ * 可选组件资料 → FRTSUnitData → 选区视图
+ * 选中 / 取消 / 悬停 / 任务变化 → 对象反馈
+ * ```
+ * @ProductDocument
+ */
 UCLASS(Blueprintable, ClassGroup=(Custom), meta=(BlueprintSpawnableComponent))
 class RTSINPUTSYSTEM_API URTSSelectable : public UActorComponent
 {
 	GENERATED_BODY()
 public:
+	/**
+	 * @brief 在所属 Actor 被选中时处理反馈。
+	 * @ProductDocument
+	 */
 	UFUNCTION(BlueprintCallable, BlueprintImplementableEvent, Category = "RTS Selection")
 	void OnSelected();
 

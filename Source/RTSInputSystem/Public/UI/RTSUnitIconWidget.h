@@ -13,6 +13,13 @@ class URTSTooltipWidget;
 
 /**
  * Represents a single unit icon or group summary icon in the selection panel.
+ * @brief 呈现一个单位条目及其活动状态。
+ * @details 单位数据用于初始化图标。生命或命令进度变化后更新该条目的对应显示。
+ * 
+ * ```
+ * 单位数据 → 图标与提示
+ * 生命值 / 命令进度事件 → 状态条 / 活动显示
+ * ```
  */
 UCLASS()
 class RTSINPUTSYSTEM_API URTSUnitIconWidget : public UUserWidget

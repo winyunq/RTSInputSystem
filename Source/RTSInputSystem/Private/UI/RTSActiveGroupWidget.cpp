@@ -3,6 +3,7 @@
 #include "UI/RTSActiveGroupWidget.h"
 #include "UI/RTSUnitIconWidget.h"
 #include "RTSSelectionSubsystem.h" 
+#include "RTSInputPanelSettings.h"
 #include "Blueprint/WidgetTree.h"
 #include "Components/Border.h"
 #include "Components/Image.h"
@@ -11,6 +12,11 @@
 #include "Components/SceneCaptureComponent2D.h"
 #include "Components/SizeBox.h"
 #include "Engine/TextureRenderTarget2D.h"
+#include "Engine/SkeletalMesh.h"
+#include "Animation/Skeleton.h"
+#include "Kismet/GameplayStatics.h"
+#include "Sound/SoundBase.h"
+#include "Sound/SoundConcurrency.h"
 #include "Engine/World.h"
 #include "EngineUtils.h"
 #include "Fragments/RenderBatchData.h"
@@ -24,14 +30,93 @@
 #include "Styling/CoreStyle.h"
 #include "Widgets/Layout/SBorder.h"
 #include "Widgets/Layout/SBox.h"
+#if WITH_DEV_AUTOMATION_TESTS
+#include "Engine/Engine.h"
+#include "Misc/AutomationTest.h"
+#endif
 
 namespace
 {
 	const FVector PortraitStageLocation(0.0, 0.0, 100000.0);
 
+	USoundConcurrency* GetCommandVoiceConcurrency(ULocalPlayer* LocalPlayer)
+	{
+		const FName Name(TEXT("RTSCommandVoiceConcurrency"));
+		USoundConcurrency* Concurrency = FindObject<USoundConcurrency>(LocalPlayer, *Name.ToString());
+		if (!Concurrency)
+		{
+			Concurrency = NewObject<USoundConcurrency>(LocalPlayer, Name, RF_Transient);
+			Concurrency->Concurrency.MaxCount = 1;
+			Concurrency->Concurrency.ResolutionRule = EMaxConcurrentResolutionRule::PreventNew;
+		}
+		return Concurrency;
+	}
+
 	FString GetActiveGroupUnitGroupKey(const FRTSUnitData& Data)
 	{
 		return Data.GroupKey.IsEmpty() ? Data.Name : Data.GroupKey;
+	}
+
+	FBox ResolvePortraitBounds(const AMassBattleAgentRenderer* Renderer,
+		const FTransform& Transform, FVector& ViewDirection)
+	{
+		const FBox MeshBounds = Renderer->AgentMesh->GetBoundingBox();
+		UMassBattleATTDataAsset* AnimationData = Renderer->BoneAnimDataAsset.Get();
+		const FMassBattleBoneStream* ExtraStream = Renderer->ExtraBoneStreams.FindByPredicate(
+			[](const FMassBattleBoneStream& Stream) { return Stream.DataAsset || Stream.Skeleton; });
+		if (!AnimationData && ExtraStream) AnimationData = ExtraStream->DataAsset.Get();
+		USkeletalMesh* SkeletalMesh = AnimationData ? AnimationData->SkeletalMesh.LoadSynchronous() : nullptr;
+		const FReferenceSkeleton* ReferenceSkeleton = SkeletalMesh ? &SkeletalMesh->GetRefSkeleton()
+			: (ExtraStream && ExtraStream->Skeleton ? &ExtraStream->Skeleton->GetReferenceSkeleton() : nullptr);
+		if (ReferenceSkeleton)
+		{
+			const FReferenceSkeleton& Skeleton = *ReferenceSkeleton;
+			const TArray<FTransform>& Pose = Skeleton.GetRefBonePose();
+			for (int32 Index = 0; Index < Skeleton.GetNum(); ++Index)
+			{
+				const FString Name = Skeleton.GetBoneName(Index).ToString().ToLower();
+				if (Name != TEXT("head") && !Name.EndsWith(TEXT("_head"))
+					&& !Name.EndsWith(TEXT(":head")) && !Name.StartsWith(TEXT("head_"))) continue;
+				FTransform Head = Pose[Index];
+				for (int32 Parent = Skeleton.GetParentIndex(Index); Parent != INDEX_NONE;
+					Parent = Skeleton.GetParentIndex(Parent)) Head *= Pose[Parent];
+				const float Radius = FMath::Max(0.1f, FMath::Max(
+					Pose[Index].GetTranslation().Size() * 1.25f,
+					MeshBounds.GetExtent().Z * 0.16f));
+				const FVector Center = Head.GetTranslation() + FVector(0, 0, Radius * 0.4f);
+				const FVector Extent(Radius * 0.85f, Radius * 0.85f, Radius * 1.15f);
+				return FBox(Center - Extent, Center + Extent);
+			}
+		}
+
+		// Look along the longer horizontal axis so non-character models fill the portrait.
+		const FVector ScaledExtent = MeshBounds.GetExtent() * Transform.GetScale3D().GetAbs();
+		const FVector Axis = ScaledExtent.X >= ScaledExtent.Y
+			? FVector::ForwardVector : FVector::RightVector;
+		const float Pitch = ViewDirection.Z;
+		ViewDirection = (Transform.TransformVectorNoScale(Axis).GetSafeNormal2D()
+			* FMath::Sqrt(FMath::Max(0.0f, 1.0f - Pitch * Pitch))
+			+ FVector(0, 0, Pitch)).GetSafeNormal();
+		return MeshBounds;
+	}
+
+	float FitPortraitBounds(const FBox& Bounds, const FTransform& Transform, const FVector& ViewDirection,
+		float HorizontalTan, float VerticalTan, float Padding)
+	{
+		const FRotationMatrix ViewRotation((-ViewDirection).Rotation());
+		const FVector Right = ViewRotation.GetUnitAxis(EAxis::Y);
+		const FVector Up = ViewRotation.GetUnitAxis(EAxis::Z);
+		const FVector Extent = Bounds.GetExtent();
+		float Distance = 1.0f;
+		for (int32 Corner = 0; Corner < 8; ++Corner)
+		{
+			const FVector Offset = Transform.TransformVector(FVector(Extent.X * ((Corner & 1) ? 1 : -1),
+				Extent.Y * ((Corner & 2) ? 1 : -1), Extent.Z * ((Corner & 4) ? 1 : -1)));
+			Distance = FMath::Max(Distance, static_cast<float>(FVector::DotProduct(Offset, ViewDirection)
+				+ Padding * FMath::Max(FMath::Abs(FVector::DotProduct(Offset, Right)) / HorizontalTan,
+					FMath::Abs(FVector::DotProduct(Offset, Up)) / VerticalTan)));
+		}
+		return Distance;
 	}
 
 }
@@ -101,6 +186,11 @@ void URTSActiveGroupWidget::NativeConstruct()
 			if (URTSSelectionSubsystem* Subsystem = LP->GetSubsystem<URTSSelectionSubsystem>())
 			{
 				Subsystem->OnSelectionChanged.AddUniqueDynamic(this, &URTSActiveGroupWidget::OnSelectionUpdated);
+				if (AvatarImage || GroupIcon)
+				{
+					CommandVoiceConcurrency = GetCommandVoiceConcurrency(LP);
+					Subsystem->OnCommandFeedbackIssued.AddUObject(this, &URTSActiveGroupWidget::HandleCommandFeedback);
+				}
 			}
 		}
 	}
@@ -115,6 +205,7 @@ void URTSActiveGroupWidget::NativeDestruct()
 			if (URTSSelectionSubsystem* Subsystem = LP->GetSubsystem<URTSSelectionSubsystem>())
 			{
 				Subsystem->OnSelectionChanged.RemoveDynamic(this, &URTSActiveGroupWidget::OnSelectionUpdated);
+				Subsystem->OnCommandFeedbackIssued.RemoveAll(this);
 			}
 		}
 	}
@@ -582,7 +673,8 @@ bool URTSActiveGroupWidget::UpdatePortraitPreview()
 	}
 	if (Batch->bUseMeshIndexArray)
 	{
-		// Preserve the portrait LOD limit for meshes that only provide LOD0.
+		// 选中实体 → 渲染批次实例 → 独立头像预览 → 拍摄
+		// 对只有 LOD0 的网格保留头像所用的 LOD 上限。
 		const int32 RequestedLOD = Batch->CurrentLODArray.IsValidIndex(SourceIndex)
 			? Batch->CurrentLODArray[SourceIndex]
 			: 0;
@@ -683,11 +775,6 @@ bool URTSActiveGroupWidget::UpdatePortraitPreview()
 		FName("User.LogicTickTime"),
 		GetWorld() ? GetWorld()->GetTimeSeconds() : 0.0f);
 
-	// Frame the rendered model independently of its gameplay collision shape.
-	const FBoxSphereBounds PreviewBounds = Renderer->AgentMesh->GetBounds().TransformBy(
-		FTransform(PreviewRenderRotation, PreviewRenderLocation, PreviewScale));
-	const FVector BoundsExtent = PreviewBounds.BoxExtent.ComponentMax(FVector(0.1));
-
 	const float HalfFovRadians = FMath::DegreesToRadians(
 		FMath::Clamp(PortraitFieldOfView, 10.0f, 90.0f) * 0.5f);
 	const float HorizontalTan = FMath::Max(0.1f, FMath::Tan(HalfFovRadians));
@@ -697,16 +784,12 @@ bool URTSActiveGroupWidget::UpdatePortraitPreview()
 		: FMath::Clamp(PortraitPanelWidth, 96.0f, 512.0f)
 			/ FMath::Clamp(PortraitPanelHeight, 128.0f, 512.0f);
 	const float VerticalTan = HorizontalTan / FMath::Max(0.1f, CaptureAspect);
-	const float DistanceForWidth = BoundsExtent.Y / HorizontalTan;
-	const float DistanceForHeight = BoundsExtent.Z / VerticalTan;
-	float Distance = FMath::Max(DistanceForWidth, DistanceForHeight)
-		* FMath::Max(1.0f, PortraitFramingPadding)
-		+ FMath::Max(0.0f, BoundsExtent.X);
-	const FVector FocusPoint = PreviewBounds.Origin + FVector(
-		0.0f,
-		0.0f,
-		BoundsExtent.Z * 0.08f);
-	const FVector ViewDirection = PortraitViewDirection.Vector().GetSafeNormal();
+	const FTransform PreviewTransform(PreviewRenderRotation, PreviewRenderLocation, PreviewScale);
+	FVector ViewDirection = PortraitViewDirection.Vector().GetSafeNormal();
+	const FBox FramingBounds = ResolvePortraitBounds(Renderer, PreviewTransform, ViewDirection);
+	const FVector FocusPoint = PreviewTransform.TransformPosition(FramingBounds.GetCenter());
+	const float Distance = FitPortraitBounds(FramingBounds, PreviewTransform, ViewDirection,
+		HorizontalTan, VerticalTan, FMath::Clamp(PortraitFramingPadding, 1.0f, 1.08f));
 	const FVector CameraLocation = FocusPoint + ViewDirection * Distance;
 	const float LightRadius = FMath::Max(500.0f, Distance * 3.0f);
 	if (PortraitKeyLightComponent)
@@ -731,6 +814,44 @@ bool URTSActiveGroupWidget::UpdatePortraitPreview()
 		(FocusPoint - CameraLocation).Rotation());
 	return true;
 }
+
+#if WITH_DEV_AUTOMATION_TESTS
+
+
+
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FRTSPortraitFramingTest, "Winyunq.Input.UnitPresentation.PortraitFraming",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+bool FRTSPortraitFramingTest::RunTest(const FString& Parameters)
+{
+	const FVector Extents[] = {FVector(15, 14, 20), FVector(240, 65, 50), FVector(60, 60, 180)};
+	for (const FVector& Extent : Extents)
+	{
+		const FBox Bounds(-Extent, Extent);
+		const FTransform Transform(FRotator(0, 37, 0), FVector(0, 0, 100000), FVector(1.2, 0.8, 1.5));
+		const FVector ViewDirection = FRotator(8, 90, 0).Vector();
+		const FRotationMatrix Rotation((-ViewDirection).Rotation());
+		const double HorizontalTan = FMath::Tan(FMath::DegreesToRadians(14.0));
+		const double VerticalTan = HorizontalTan / (316.0 / 512.0);
+		const float Distance = FitPortraitBounds(Bounds, Transform, ViewDirection, HorizontalTan, VerticalTan, 1.04f);
+		double Occupancy = 0;
+		for (int32 Corner = 0; Corner < 8; ++Corner)
+		{
+			const FVector Point = Transform.TransformVector(FVector(Extent.X * ((Corner & 1) ? 1 : -1),
+				Extent.Y * ((Corner & 2) ? 1 : -1), Extent.Z * ((Corner & 4) ? 1 : -1)));
+			const double Depth = Distance - FVector::DotProduct(Point, ViewDirection);
+			TestTrue(TEXT("Model remains in front of the portrait camera"), Depth > 0);
+			const double X = FMath::Abs(FVector::DotProduct(Point, Rotation.GetUnitAxis(EAxis::Y))) / (Depth * HorizontalTan);
+			const double Y = FMath::Abs(FVector::DotProduct(Point, Rotation.GetUnitAxis(EAxis::Z))) / (Depth * VerticalTan);
+			TestTrue(TEXT("Portrait contains every model corner"), X <= 1.0001 && Y <= 1.0001);
+			Occupancy = FMath::Max(Occupancy, FMath::Max(X, Y));
+		}
+		TestTrue(TEXT("Portrait uses at least 90 percent of one frame dimension"), Occupancy >= 0.9);
+	}
+	return true;
+}
+#endif
 
 void URTSActiveGroupWidget::CapturePortraitFrame()
 {
@@ -765,6 +886,20 @@ void URTSActiveGroupWidget::ApplyStaticPortrait(UTexture2D* Texture)
 	}
 }
 
+void URTSActiveGroupWidget::HandleCommandFeedback( const FRTSSelectionView& Context, FGameplayTag CommandTag, FVector, bool, bool)
+{
+	 const FRTSUnitData* Unit = Context.Mode == ERTSSelectionMode::Single ? &Context.SingleUnit : nullptr; if (!Unit) for (const FRTSUnitData& Item : Context. Items)
+	  if (GetActiveGroupUnitGroupKey(Item) == Context.ActiveGroupKey) { Unit = &Item; break; }
+	 if (!Unit && !Context.Items.IsEmpty()) Unit = &Context.Items[0];
+	 if (!Unit || Unit-> Name.IsEmpty()) return;
+	OnUnitCommandAcknowledged(CommandTag, *Unit);
+	USoundBase* Sound = GetDefault<URTSInputPanelSettings>()->ResolveCommandVoice(
+		Unit->AnnouncerId, CommandTag);
+	if (!Sound) Sound = Unit->ConfirmationSound.LoadSynchronous();
+	if (Sound)
+		UGameplayStatics::PlaySound2D(this, Sound, 1.0f, 1.0f, 0.0f, CommandVoiceConcurrency);
+}
+
 void URTSActiveGroupWidget::OnSelectionUpdated(const FRTSSelectionView& View)
 {
 	const FRTSUnitData* ActiveData = nullptr;
@@ -783,6 +918,15 @@ void URTSActiveGroupWidget::OnSelectionUpdated(const FRTSSelectionView& View)
 		ActiveData = &View.Items[0];
 	}
 
+	if (ActiveData && CommandVoiceConcurrency
+		&& (CommandFeedbackUnit.EntityHandle != ActiveData->EntityHandle
+			|| CommandFeedbackUnit.GroupKey != ActiveData->GroupKey
+			|| CommandFeedbackUnit.Name != ActiveData->Name))
+	{
+		if (USoundBase* Sound = ActiveData->SelectionSound.LoadSynchronous())
+			UGameplayStatics::PlaySound2D(this, Sound, 1.0f, 1.0f, 0.0f, CommandVoiceConcurrency);
+	}
+	CommandFeedbackUnit = ActiveData ? *ActiveData : FRTSUnitData();
 	if (ActiveData)
 	{
 		// We have an active group/unit.

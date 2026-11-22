@@ -20,6 +20,14 @@ class SWidget;
 
 /**
  * Main Selection Panel. Handles Empty, Single, List, and Summary routes.
+ * @brief 在单位信息面板中显示选中内容。
+ * @details 从选区、控制组与命令进度事件取得数据，按当前显示模式刷新单位详情或网格。
+ * 
+ * ```
+ * 选区 / 控制组 / 进度 → 面板路由
+ *                     ├→ 单位详情
+ *                     └→ 单位网格 / 进度槽位
+ * ```
  */
 UCLASS()
 class RTSINPUTSYSTEM_API URTSUnitPanelWidget : public UUserWidget
@@ -39,6 +47,11 @@ protected:
 	virtual TSharedRef<SWidget> RebuildWidget() override;
 	virtual void ReleaseSlateResources(bool bReleaseChildren) override;
 
+	/**
+	 * @brief 根据新的选区视图刷新单位面板。
+	 * @details 把选区事件交给 RefreshGrid，由当前显示模式选择呈现方式。
+	 * @param View 选区事件携带的最新视图。
+	 */
 	UFUNCTION()
 	void OnSelectionUpdated(const FRTSSelectionView& View);
 

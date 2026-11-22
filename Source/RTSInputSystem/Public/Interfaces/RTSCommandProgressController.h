@@ -19,6 +19,15 @@ class RTSINPUTSYSTEM_API URTSCommandProgressController : public UInterface
 	GENERATED_BODY()
 };
 
+/**
+ * @brief 定义计时命令的准备、开始、完成及取消入口。
+ * @details 业务对象实现相应阶段处理，可以对进度项的执行与容量变化作出响应。
+ *
+ * ```
+ * 进度项 → 准备 → 开始 → 完成
+ * 取消请求 / 容量变化 → 业务对象处理
+ * ```
+ */
 class RTSINPUTSYSTEM_API IRTSCommandProgressController
 {
 	GENERATED_BODY()
@@ -41,4 +50,9 @@ public:
 
 	UFUNCTION(BlueprintNativeEvent, BlueprintCallable, Category = "RTS Progress")
 	void RequestCancelCommandProgressItem(FName ItemId);
+
+	/**
+	 * @brief 由容量已有的状态所有者接收本容量变动，避免全局广播唤醒无关对象。
+	 */
+	virtual void HandleCapacityChanged(FName CapacityId) {}
 };

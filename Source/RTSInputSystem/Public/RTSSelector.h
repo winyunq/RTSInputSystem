@@ -54,6 +54,16 @@ struct RTSINPUTSYSTEM_API FRTSHashGridSelectionResult
 DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(FOnRTSHashGridSelectionCommitted, const FRTSHashGridSelectionResult&, Result);
 DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(FOnRTSHashGridSelectionCancelled, FGameplayTag, CommandTag);
 
+/**
+ * @brief 将玩家的选区和目标输入交给本地 RTS 子系统。
+ * @details 命令卡交付原按钮定义后，由选择器保存瞄准状态并解析光标、小地图或放置预览目标。
+ * 
+ * ```
+ * 命令卡原按钮 → BeginCommandTargeting → 保存瞄准状态
+ * 光标 / 小地图 / 格子预览 → 解析目标 → ExecuteCommand
+ * ```
+ * @ProductDocument
+ */
 UCLASS(Blueprintable, BlueprintType, ClassGroup=(Custom), meta=(BlueprintSpawnableComponent))
 class RTSINPUTSYSTEM_API URTSSelector : public UActorComponent
 {
@@ -84,6 +94,10 @@ public:
 	// --- Targeting State (for Targeted Commands like Move/Attack) ---
 	UPROPERTY(BlueprintReadWrite, Category = "RTSCamera - Selection")
 	bool bIsTargeting = false;
+	/**
+	 * @brief 瞄准开始时保存的按钮定义。
+	 * @details 提交目标时把同一按钮传给选区子系统，响应组由提交时的索引提供。取消瞄准时清除此引用。
+	 */
 	UPROPERTY(Transient)
 	TObjectPtr<URTSCommandButton> TargetingCommandDefinition;
 	FOnRTSHashGridSelectionCancelled OnTargetingChanged;
@@ -91,21 +105,55 @@ public:
 	UPROPERTY(BlueprintReadWrite, Category = "RTSCamera - Selection")
 	FGameplayTag PendingCommandTag;
 
+	/**
+	 * @brief 按标签为当前面板命令开始瞄准。
+	 * @details 调用 BeginTargetingWithType，从当前命令索引取得按钮定义。
+	 * @param CommandTag 当前命令面板中的命令标签。
+	 */
 	UFUNCTION(BlueprintCallable, Category = "RTSCamera - Selection")
 	void BeginTargeting(FGameplayTag CommandTag);
 
-	/** Starts targeting while preserving the button's explicit target model. */
+	/**
+	 * @brief 按标签取得原按钮并开始瞄准。
+	 * @details 从本地玩家的选区索引取得命令定义，再调用 BeginCommandTargeting。目标种类取自该定义。
+	 * @param CommandTag 当前命令面板中的命令标签。
+	 * @param TargetType 接口保留的目标类型参数。当前实现读取原按钮的 TargetType。
+	 * @code{.cpp}
+	 * Selector->BeginTargetingWithType(MoveCommandTag, ERTSCommandTargetType::Location);
+	 * // In the minimap click handler:
+	 * if (Selector->CommitPendingTargetingAtWorldLocation(ClickedWorldLocation))
+	 * {
+	 *     // The command was submitted. Update the minimap indicator.
+	 * }
+	 * @endcode
+	 * @ProductDocument
+	 */
 	UFUNCTION(BlueprintCallable, Category = "RTSCamera - Selection")
 	void BeginTargetingWithType(FGameplayTag CommandTag, ERTSCommandTargetType TargetType);
 
+	/**
+	 * @brief 结束当前命令的目标选择。
+	 * @details 放置预览通过格子取消入口收尾。普通瞄准清除目标状态和按钮引用，恢复光标并请求刷新命令显示。
+	 * @ProductDocument
+	 */
 	UFUNCTION(BlueprintCallable, Category = "RTSCamera - Selection")
 	void CancelTargeting();
 
-	/** Commits the active targeted command at the current cursor position. */
+	/**
+	 * @brief Commits the active command using the cursor target.
+	 * @details Use this after starting command targeting.
+	 * @ProductDocument
+	 */
 	UFUNCTION(BlueprintCallable, Category = "RTSCamera - Selection")
 	bool CommitPendingTargetingAtCursor();
 
-	/** Commits the active location-capable command at an explicit world point, such as a minimap click. */
+	/**
+	 * @brief 为正在瞄准的位置命令提供世界坐标。
+	 * @details 接受位置或位置及实体两用命令的世界坐标。将原按钮和坐标交给选区子系统，未按排队修饰键时随后结束瞄准。
+	 * @param WorldLocation 小地图等入口提供的目标世界坐标。
+	 * @return 坐标可交付给选区执行入口时为 true。当前状态或坐标不符合提交条件时为 false。
+	 * @ProductDocument
+	 */
 	UFUNCTION(BlueprintCallable, Category = "RTSCamera - Selection")
 	bool CommitPendingTargetingAtWorldLocation(FVector WorldLocation);
 
@@ -138,15 +186,28 @@ public:
 	UPROPERTY(BlueprintReadOnly, Category = "RTSCamera - Selection")
 	TArray<URTSSelectable*> SelectedActors;
 
+	/**
+	 * @brief 在建造格选择提交时提供选择结果。
+	 * @ProductDocument
+	 */
 	UPROPERTY(BlueprintAssignable, Category = "RTSCamera - Hash Grid Selection")
 	FOnRTSHashGridSelectionCommitted OnHashGridSelectionCommitted;
 
+	/**
+	 * @brief 在建造格选择取消时提供命令标签。
+	 * @ProductDocument
+	 */
 	UPROPERTY(BlueprintAssignable, Category = "RTSCamera - Hash Grid Selection")
 	FOnRTSHashGridSelectionCancelled OnHashGridSelectionCancelled;
 
 	UFUNCTION(BlueprintCallable, Category = "RTSCamera - Hash Grid Selection")
 	void BeginHashGridSelection(FGameplayTag CommandTag);
 
+	/**
+	 * @brief 开始按占地尺寸选择建造格。
+	 * @details 传入占地格数与单格大小。
+	 * @ProductDocument
+	 */
 	UFUNCTION(BlueprintCallable, Category = "RTSCamera - Hash Grid Selection")
 	void BeginHashGridSelectionWithFootprint(FGameplayTag CommandTag, FVector2D FootprintCells, float CellSize);
 
@@ -157,6 +218,10 @@ public:
 		float CellSize,
 		UMassBattleAgentConfigDataAsset* PreviewUnit);
 
+	/**
+	 * @brief 取消当前的建造格选择。
+	 * @ProductDocument
+	 */
 	UFUNCTION(BlueprintCallable, Category = "RTSCamera - Hash Grid Selection")
 	void CancelHashGridSelection();
 
@@ -165,7 +230,19 @@ public:
 
 
 
+	/**
+	 * @brief 为原按钮定义进入目标选择模式。
+	 * @details 保存按钮引用和目标类型。有放置占地或需要格子选择的命令进入放置预览，其余目标命令使用十字光标。
+	 * @param Command 命令面板交付的原按钮定义。
+	 * @return 开始瞄准时为 true。空按钮和即时命令返回 false。
+	 */
 	bool BeginCommandTargeting(URTSCommandButton* Command);
+
+	
+	
+	void BeginHashGridSelectionForContext(FGameplayTag CommandTag, FVector2D FootprintCells, float CellSize, UMassBattleAgentConfigDataAsset* PreviewUnit, URTSCommandButton* Command);
+
+	
 protected:
 	virtual void BeginPlay() override;
 	virtual void EndPlay(const EEndPlayReason::Type EndPlayReason) override;
@@ -269,11 +346,7 @@ private:
 	UFUNCTION()
 	void HandleControlGroupFocusRequested(int32 GroupIndex, FVector WorldCenter);
 
-	void HandleCommandFeedbackIssued(
-		FGameplayTag CommandTag,
-		FVector WorldLocation,
-		bool bHasWorldLocation,
-		bool bQueue);
+	void HandleCommandFeedbackIssued(const FRTSSelectionView& Context, const FGameplayTag CommandTag, const FVector WorldLocation, const bool bHasWorldLocation, const bool bQueue);
 
 	UFUNCTION() void SelectAllArtillery();
 	UFUNCTION() void SelectAllAircraft();
@@ -319,6 +392,12 @@ private:
 	void EndHashGridSelectionPreview();
 	void CommitHashGridSelection();
 	bool IsCommandQueueModifierDown() const;
+	/**
+	 * @brief 解析光标目标并提交瞄准中的命令。
+	 * @details 实体目标从光标命中解析 Mass 句柄，位置目标使用命中世界坐标。目标与瞄准类型匹配后，把原按钮定义和目标交给选区子系统。
+	 * @param Hit 用于位置目标的光标碰撞结果。
+	 * @return 取得可提交的目标并调用选区执行入口时为 true。目标解析失败或选区子系统缺失时为 false。
+	 */
 	bool IssuePendingTargetingCommand(const FHitResult& Hit);
 	bool ResolveSmartCommandHit(FHitResult& OutHit, FEntityHandle& OutEntityTarget, bool& bOutHostileUnitTarget) const;
 	void ShowGroundCommandFeedback(const FVector& Location, bool bAttackGround);

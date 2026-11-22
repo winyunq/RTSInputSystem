@@ -53,7 +53,8 @@ void FRTSInputSystemModule::StartupModule()
 	TagsManager.AddNativeGameplayTag(FName(TEXT("RTS.Command.Research.OpenPanel")), TEXT("Open research panel."));
 	TagsManager.AddNativeGameplayTag(FName(TEXT("RTS.Command.Structure.Upgrade")), TEXT("Upgrade an owned economy structure after its required technology is researched."));
 
-	// Country assets are implementations of these universal unit classes. Unit classes
+	// 国家资产实现共用兵种类型。
+	// 共用兵种类型 → 默认面板配置 → 可见命令
 	// supply default button cards; a nation's subtype index never creates a skill.
 	TagsManager.AddNativeGameplayTag(FName(TEXT("RTS.UnitClass.Officer")), TEXT("Universal officer class; all national officer implementations inherit officer capabilities."));
 	TagsManager.AddNativeGameplayTag(FName(TEXT("RTS.UnitClass.Infantry")), TEXT("Universal infantry class."));

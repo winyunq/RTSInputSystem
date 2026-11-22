@@ -17,12 +17,20 @@ class URTSCommanderGridWidget;
 /**
  * A Single Button in the Command Grid.
  * Displays Icon, handles clicks, shows tooltip.
+ * @brief 显示单条命令并向面板报告点击。
+ * @details 保存按钮定义和展示上下文，将条件、进度等状态用于界面表现。
+ * 
+ * ```
+ * 命令定义 + 单位上下文 → 可用性 / 图标 / 进度 → 控件
+ * 鼠标 / 热键 → HandleClicked → OnCommandClicked(控件)
+ * ```
  */
 UCLASS()
 class RTSINPUTSYSTEM_API URTSCommandButtonWidget : public UUserWidget
 {
 	GENERATED_BODY()
 	friend class URTSCommanderGridWidget;
+	friend class FRTSCommandStateFrameTest;
 
 public:
 	
@@ -65,10 +73,21 @@ public:
 	const FRTSCommandState& GetTooltipState() const { return CommandState; }
 	const FKey& GetCommandHotkey() const { return CommandHotkey; }
 
-	// Event for click
-	UPROPERTY(BlueprintAssignable, Category = "RTS Command")
-	FOnCommandButtonClicked OnCommandClicked;
+	
 
+
+	public:
+		/**
+		 * @brief 传递被点击的命令控件。
+		 * @details 订阅者通过控件读取命令定义和当前界面上下文。
+		 */
+		TMulticastDelegate<void(URTSCommandButtonWidget*)> OnCommandClicked;
+
+	
+
+	
+	private:
+	
 protected:
 	virtual TSharedRef<SWidget> RebuildWidget() override;
 
@@ -142,6 +161,8 @@ protected:
     // The class to use for tooltips - MOVED TO GRID
     // UPROPERTY(EditAnywhere, Category = "UI")
     // TSubclassOf<class URTSTooltipWidget> TooltipWidgetClass;
+	// @brief 对持有命令定义的控件发布点击事件。
+	// @details 事件传递当前控件，命令面板用 GetData 读取被点击的原按钮定义。
 
 	UFUNCTION()
 	void HandleClicked();

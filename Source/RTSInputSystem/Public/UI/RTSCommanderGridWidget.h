@@ -15,6 +15,14 @@ class URTSSelector;
 /**
  * The 3x5 Grid Container.
  * Manages 15 RTSCommandButtonWidgets.
+ * @brief 显示命令面板并把点击和热键交给命令入口。
+ * @details 按面板定义安排槽位并复用按钮控件。点击交付控件持有的原按钮。
+ * 
+ * ```
+ * 面板配置 → 槽位 → 命令控件
+ * 鼠标 / 热键 → 点击原按钮 ┬→ 需要目标：开始瞄准
+ *                          └→ 即时命令：交给选区执行
+ * ```
  */
 UCLASS()
 class RTSINPUTSYSTEM_API URTSCommanderGridWidget : public URTSActiveGroupWidget
@@ -25,6 +33,7 @@ public:
 
 	virtual void NativeConstruct() override;
 	virtual void NativeDestruct() override;
+	virtual void NativeTick(const FGeometry& MyGeometry, float InDeltaTime) override;
 	virtual void NativePreConstruct() override;
 	virtual void SynchronizeProperties() override;
 
@@ -71,6 +80,13 @@ protected:
 	UPROPERTY(Transient)
 	TMap<FGuid, TObjectPtr<URTSCommandButtonWidget>> ResearchButtons;
 
+	/**
+	 * @brief 为命令定义取得可复用的界面按钮。
+	 * @details 写入当前单位的业务上下文，按定义查找已创建控件。单次研究还按进度实例或拥有者区分。需要新控件时绑定统一的点击回调。
+	 * @param Definition 用于显示和执行的原按钮定义。
+	 * @param Owner 当前面板单位的展示和业务上下文。
+	 * @return 可用于该定义的控件。缺少定义、控件类型或创建失败时为空。
+	 */
 	URTSCommandButtonWidget* GetCommandButtonInstance(URTSCommandButton* Definition, const FRTSUnitData& Owner);
 
 	// Populate the grid based on data
@@ -80,10 +96,19 @@ protected:
 	void InitGridSlots();
 
     // 统一网格填充逻辑（支持 PreferredIndex 与自动空位）
+    // @brief 将命令定义填入面板槽位。
+    // @details 优先使用有效且空闲的首选槽位，其余定义按顺序填入空位。
+    // @param Grid 提供命令定义的面板。
+    // @param OutButtons 按槽位排列的输出数组。空槽保留空指针。
     void PopulateSparseButtons(URTSCommandGridAsset* Grid, TArray<URTSCommandButton*>& OutButtons);
 
+	/**
+	 * @brief 将被点击的原按钮交给命令输入流程。
+	 * @details 从控件读取命令定义。能开始瞄准时保留定义等待目标，否则以空目标调用选区执行入口。
+	 * @param Button 发出点击通知的命令控件。
+	 */
 	UFUNCTION()
-	void OnGridButtonClicked(const FGameplayTag& CommandTag);
+		void OnGridButtonClicked(URTSCommandButtonWidget* Button);
 	
     /** 响应 Actor 内部触发的网格变更通知 */
     UFUNCTION()
@@ -107,12 +132,21 @@ protected:
 	void RegisterCommandPanelHotkeys();
 	void RebuildCommandPanelHotkeys();
 	void UnregisterCommandPanelHotkeys();
+	/**
+	 * @brief 执行命令热键对应槽位的点击。
+	 * @details 槽位有效且按钮可见时，调用和鼠标点击相同的 HandleClicked 入口。
+	 * @param SlotIndex 热键对应的命令面板槽位下标。
+	 */
 	void ExecuteCommandPanelSlot(int32 SlotIndex);
 	void HandleCommandPanelHotkeyPressed(int32 SlotIndex, const FKey& Hotkey);
 	void HandleCommandPanelHotkeyRepeated(int32 SlotIndex, const FKey& Hotkey);
 	void HandleCommandPanelHotkeyReleased(const FKey& Hotkey);
 	void ClearHeldCommandHotkeyState();
 	void ConfirmPendingTargetWithHotkey(URTSSelector* Selector, const FKey& Hotkey, bool bRapidFire = false);
+	/**
+	 * @brief 让命令面板标记正在瞄准或正在执行的命令。
+	 * @details 瞄准期间优先使用待提交命令标签，其余时刻读取活动组单位的共同命令。逐个可用槽位按精确标签匹配设置状态。
+	 */
 	void UpdateCommandStateVisuals();
 	void PositionSharedTooltip();
 
@@ -191,4 +225,6 @@ public:
 		return nullptr;
 	}
 
+
+	UPROPERTY(Transient) TObjectPtr<class URTSSelector> CommandSelector;
 };

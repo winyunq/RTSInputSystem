@@ -12,6 +12,13 @@
 
 /**
  * Move (Q)
+ * @brief 提供移动按钮的默认命令配置。
+ * @details 此头文件还提供攻击、停止、坚守和巡逻的按钮定义，原生动作由命令子系统执行。
+ * 
+ * ```
+ * 单位基础按钮定义 → 命令面板
+ * 移动 / 攻击 / 停止 / 坚守 / 巡逻 → 原生动作
+ * ```
  */
 UCLASS()
 class RTSINPUTSYSTEM_API URTSCmd_Move : public URTSBuiltinCommandButton

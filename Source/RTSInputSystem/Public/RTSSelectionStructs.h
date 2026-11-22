@@ -8,6 +8,7 @@
 #include "MassEntityTypes.h"
 #include "MassAPIStructs.h"
 #include "UObject/SoftObjectPtr.h"
+#include "Engine/LocalPlayer.h"
 #include "RTSSelectionStructs.generated.h"
 
 class UTexture2D;
@@ -24,6 +25,10 @@ enum class ERTSSelectionMode : uint8
 	Summary = 3 UMETA(DisplayName = "Group Summary")
 };
 
+/**
+ * @brief 指定新结果如何修改当前选区。
+ * @ProductDocument
+ */
 UENUM(BlueprintType)
 enum class ERTSSelectionModifier : uint8
 {
@@ -32,7 +37,10 @@ enum class ERTSSelectionModifier : uint8
 	Remove      UMETA(DisplayName = "Remove from Selection")
 };
 
-/** How the current selection is written into a persistent player control group. */
+/**
+ * How the current selection is written into a persistent player control group.
+ * @ProductDocument
+ */
 UENUM(BlueprintType)
 enum class ERTSControlGroupAssignmentMode : uint8
 {
@@ -41,7 +49,10 @@ enum class ERTSControlGroupAssignmentMode : uint8
 	StealAndReplace  UMETA(DisplayName = "Steal From Other Groups And Replace")
 };
 
-/** World-wide quick-selection request used by TopSelect and reusable UMG buttons. */
+/**
+ * World-wide quick-selection request used by TopSelect and reusable UMG buttons.
+ * @ProductDocument
+ */
 USTRUCT(BlueprintType)
 struct FRTSSelectionQuery
 {
@@ -120,7 +131,9 @@ struct RTSINPUTSYSTEM_API FRTSUnitData
 	UPROPERTY(BlueprintReadOnly, Category = "RTS Selection|Combat")
 	float WeaponPeriod = 0.0f;
 
-	/** Actual normal-damage resistance (0..1), not an invented armor-point scale. */
+	/**
+	 * @brief Flat armor in millimeters, subtracted directly from normal attack damage. | 毫米平减护甲，从普通攻击伤害中直接扣除。
+	 */
 	UPROPERTY(BlueprintReadOnly, Category = "RTS Selection|Combat")
 	float ArmorReduction = 0.0f;
 
@@ -243,7 +256,15 @@ struct RTSINPUTSYSTEM_API FRTSUnitData
 };
 
 /**
- * The snapshot sent to the UI.
+ * @brief 保存 HUD 选区视图和命令索引的单组数据。
+ * @details 显示模式决定 HUD 使用 SingleUnit 或 Items，ActiveGroupKey 标识活动组。命令组复用这个类型承载组数据。
+ * 
+ * ```
+ * 单位运行数据 → FRTSUnitData
+ *   ├→ HUD 的 SingleUnit / Items / ActiveGroupKey
+ *   └→ 命令组的 CommandEntities / CommandSourceIds
+ * ```
+ * @ProductDocument
  */
 USTRUCT(BlueprintType)
 struct FRTSSelectionView
@@ -268,6 +289,36 @@ struct FRTSSelectionView
 	// Used for highlighting and tab-cycling
 	UPROPERTY(BlueprintReadOnly, Category = "RTS Selection")
 	FString ActiveGroupKey;
+
+public:
+	
+	
+	
+	
+	/**
+	 * @brief 组内单位的业务来源标识。
+	 * @details 构建组视图时，从各单位复制非空的 ProgressSourceId。生产等业务可使用该标识定位来源。
+	 */
+	UPROPERTY()
+	TArray<FName> CommandSourceIds;
+
+	/**
+	 * @brief 记录本次命令是否排入单位现有队列。
+	 * @details 提交时先由输入入口写入首个响应组，提交入口读取该值并用于本次发令。
+	 */
+	UPROPERTY() bool bQueueCommand = false;
+
+	/**
+	 * @brief 创建命令分组视图的本地玩家。
+	 * @details 构建命令组时由选区子系统写入。
+	 */
+	UPROPERTY() ULocalPlayer* CommandPlayer = nullptr;
+
+	/**
+	 * @brief 组内 Mass 实体的只读句柄数组。
+	 * @details 构建组视图时按选区遍历顺序填充。引用同一组视图的命令共享这个数组。
+	 */
+	TSharedPtr<const TArray<FEntityHandle>> CommandEntities;
 };
 
 /** One unit-type row inside a persistent control group. */
@@ -312,7 +363,10 @@ struct FRTSControlGroupView
 	TArray<FRTSControlGroupComposition> Composition;
 };
 
-/** Complete control-group strip snapshot, ordered 1-9 then 0. */
+/**
+ * Complete control-group strip snapshot, ordered 1-9 then 0.
+ * @ProductDocument
+ */
 USTRUCT(BlueprintType)
 struct FRTSControlGroupsView
 {

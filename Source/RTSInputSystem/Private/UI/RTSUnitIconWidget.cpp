@@ -267,15 +267,13 @@ void URTSUnitIconWidget::OnUnitHealthChanged(
 void URTSUnitIconWidget::UpdateActivity()
 {
 	if (!bShowStatusBars) return;
-	const UMassBattleSubsystem* Battle = UMassBattleSubsystem::GetPtr(this);
-	const int32 CurrentTick = Battle ? Battle->GetTickCount() : INDEX_NONE;
-	const auto ProjectActivity = [CurrentTick](FRTSUnitData& Data)
+	const auto ProjectActivity = [](FRTSUnitData& Data)
 	{
 		const FRTSTimedCommandInstance* Item = Data.CommandProgressItems.FindByPredicate(
 			[](const FRTSTimedCommandInstance& Candidate) { return Candidate.State != ERTSTimedCommandState::Queued; });
 		if (Item)
 		{
-			Data.ActivityProgress = Item->GetProgress01AtTick(CurrentTick);
+			Data.ActivityProgress = static_cast<float>(Item->GetProgress01());
 			Data.ActivityRemainingSeconds = Item->DurationSeconds * (1.0f - Data.ActivityProgress);
 		}
 	};

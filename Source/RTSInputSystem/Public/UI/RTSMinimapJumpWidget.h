@@ -15,6 +15,15 @@ DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(FOnMinimapWorldLocation, const FVect
  *
  * 覆盖在小地图之上的自包含透明交互控件。
  * 负责提供可命中的透明 surface、渲染相机视锥体，并把左键转换为相机跳转、右键转换为移动命令。
+ * @brief 将小地图坐标输入交给镜头或命令目标流程。
+ * @details 维护世界与小地图坐标的转换，并显示镜头视域和临时位置标记。
+ * 
+ * ```
+ * 小地图坐标 ↔ 世界坐标
+ * 点击世界位置 ├→ 当前瞄准命令
+ *              ├→ 位置命令
+ *              └→ 镜头跳转
+ * ```
  */
 UCLASS(BlueprintType, Blueprintable, meta=(DisplayName="RTS Minimap Jump Widget"))
 class RTSINPUTSYSTEM_API URTSMinimapJumpWidget : public UUserWidget
@@ -70,6 +79,12 @@ private:
 	void RequestWorldLocation(const FVector2D& WorldPos);
 	FVector ResolveCommandWorldLocation(const FVector2D& WorldPos) const;
 	bool TryCommitPendingCommand(const FVector& WorldLocation) const;
+	/**
+	 * @brief 从小地图位置发起移动命令。
+	 * @details 取得本地选区子系统和移动标签，读取 Shift 排队状态后交给位置命令入口。
+	 * @param WorldLocation 由小地图换算得到的目标世界坐标。
+	 * @return 已调用选区位置命令入口时为 true。
+	 */
 	bool TryIssueMoveCommand(const FVector& WorldLocation) const;
 	void RequestMoveCommand(const FVector2D& WorldPos);
 	void LoadMapRegionBounds();

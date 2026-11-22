@@ -58,13 +58,15 @@ public class RTSInputSystem : ModuleRules
 			}
 		);
 
-		// Portrait and command textures are imported from disk at runtime with
-		// FImageUtils, so they must remain loose in packaged builds.
-		RuntimeDependencies.Add(
-			"$(PluginDir)/Content/Portraits/Source/...",
-			StagedFileType.NonUFS);
-		RuntimeDependencies.Add(
-			"$(PluginDir)/Content/CommandIcons/Source/...",
-			StagedFileType.NonUFS);
+		// The standalone card battle uses its own UI instead of the RTS HUD images.
+		if (Target.ProjectFile == null || Target.ProjectFile.GetFileNameWithoutExtension() != "CardBattleMobile")
+		{
+			RuntimeDependencies.Add(
+				"$(PluginDir)/Content/Portraits/Source/...",
+				StagedFileType.NonUFS);
+			RuntimeDependencies.Add(
+				"$(PluginDir)/Content/CommandIcons/Source/...",
+				StagedFileType.NonUFS);
+		}
 	}
 }

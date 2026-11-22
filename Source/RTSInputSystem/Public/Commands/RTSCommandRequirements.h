@@ -52,6 +52,15 @@ struct RTSINPUTSYSTEM_API FRTSRequirementNode
 	FName FailureReason;
 };
 
+/**
+ * @brief 保存命令使用条件和显示条件。
+ * @details 节点通过索引引用子节点，UseRoot 与 ShowRoot 定位两类条件。追加条件时重新定位索引。
+ *
+ * ```
+ * 条件节点 → UseRoot / ShowRoot
+ * Append → 重映射节点索引 → 合并对应条件树
+ * ```
+ */
 USTRUCT(BlueprintType)
 struct RTSINPUTSYSTEM_API FRTSCommandRequirements
 {
@@ -68,9 +77,18 @@ struct RTSINPUTSYSTEM_API FRTSCommandRequirements
 	int32 ShowRoot = INDEX_NONE;
 
 	int32 AddNode(const FRTSRequirementNode& Node);
-	/** Adds a Use condition while retaining the existing Use graph and all Show references. */
+	/** Adds a Use condition while retaining the existing Use graph and all Show references. 
+	 * @brief 追加单个命令使用条件。
+	 * @details 保存节点并通过 CombineRoots 合并到当前 UseRoot。
+	 * @param Node 要加入的使用条件节点。
+	 * @return 追加节点在 Nodes 中的下标。
+	 */
 	int32 AppendUse(const FRTSRequirementNode& Node);
-	/** Copies another graph, adjusts its references, and ANDs the corresponding roots. */
+	/** Copies another graph, adjusts its references, and ANDs the corresponding roots. 
+	 * @brief 追加另一组命令条件。
+	 * @details 按当前节点数偏移新节点及其子节点索引，然后把原有与新增的使用根、显示根分别合并。
+	 * @param Other 要追加的条件节点与根节点。
+	 */
 	void Append(const FRTSCommandRequirements& Other);
 };
 
